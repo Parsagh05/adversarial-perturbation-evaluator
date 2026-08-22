@@ -127,8 +127,10 @@ so Kaggle slug/capitalization differences such as
 also downloads its public adapter-checkpoint dataset when it is not attached and
 downloads/checksum-verifies the exact OpenAI ViT-L/14@336px base model.
 
-The first notebook cell selects prompt modes, normalized setup IDs, scopes,
-sources, categories, directions, and losses. With `SETUP_IDS=None`, the evaluator
+The first notebook cell sets `PERTURBATION_INPUT` and selects prompt modes,
+normalized setup IDs, scopes, sources, categories, directions, and losses.
+`SOURCE_DATASETS=None` includes every source dataset present in the selected
+manifests. With `SETUP_IDS=None`, the evaluator
 recursively processes every available setup under both `frozen_prompt/` and
 `learnable_prompt/`; filters are applied only after the mounted inventory is
 printed.

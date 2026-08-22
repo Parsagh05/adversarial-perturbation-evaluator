@@ -71,8 +71,27 @@ def _attack_candidates(root: Path) -> set[Path]:
     }
 
 
-def discover_kaggle_inputs(root: str | Path = "/kaggle/input") -> KaggleInputs:
-    """Discover the three required mounted datasets by their structure."""
+def _selected_attack_root(value: str | Path) -> Path:
+    selected = Path(value).expanduser().resolve()
+    if selected.name == "setups":
+        selected = selected.parent
+    setups = selected / "setups"
+    if not setups.is_dir() or not any(
+        (setups / mode).is_dir() for mode in ("frozen_prompt", "learnable_prompt")
+    ):
+        raise ValueError(
+            "Selected perturbation input must contain setups/frozen_prompt and/or "
+            f"setups/learnable_prompt: {selected}"
+        )
+    return selected
+
+
+def discover_kaggle_inputs(
+    root: str | Path = "/kaggle/input",
+    *,
+    attacks_root: str | Path | None = None,
+) -> KaggleInputs:
+    """Discover target datasets and validate an optional selected attack root."""
 
     root = Path(root).expanduser().resolve()
     if not root.is_dir():
@@ -80,7 +99,11 @@ def discover_kaggle_inputs(root: str | Path = "/kaggle/input") -> KaggleInputs:
     return KaggleInputs(
         mvtec_root=_unique(_mvtec_candidates(root), "MVTec AD"),
         visa_root=_unique(_visa_candidates(root), "VisA"),
-        attacks_root=_unique(_attack_candidates(root), "perturbation dataset"),
+        attacks_root=(
+            _selected_attack_root(attacks_root)
+            if attacks_root is not None
+            else _unique(_attack_candidates(root), "perturbation dataset")
+        ),
     )
 
 
@@ -111,4 +134,3 @@ def inventory_attack_setups(attacks_root: str | Path) -> dict[str, dict[str, str
     if not inventory:
         raise ValueError(f"No frozen or learnable attack setups found below {setups}")
     return inventory
-

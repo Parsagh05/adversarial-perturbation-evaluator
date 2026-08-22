@@ -26,3 +26,19 @@ def test_discovers_screenshot_kaggle_layout_and_both_prompt_modes(tmp_path: Path
             "steps500_eps2": "steps500_eps2_learnable_prompt"
         },
     }
+
+
+def test_user_can_select_the_perturbation_input(tmp_path: Path):
+    mvtec = tmp_path / "MVTec-AD" / "mvtec_anomaly_detection"
+    (mvtec / "bottle" / "test" / "good").mkdir(parents=True)
+    (mvtec / "bottle" / "ground_truth").mkdir()
+    visa = tmp_path / "VisA-AD" / "VisA_20220922" / "split_csv"
+    visa.mkdir(parents=True)
+    (visa / "1cls.csv").write_text("object,split,label,image\n")
+    selected = tmp_path / "my-perturbations"
+    (selected / "setups" / "frozen_prompt" / "steps500_eps2").mkdir(parents=True)
+
+    result = discover_kaggle_inputs(
+        tmp_path, attacks_root=selected / "setups"
+    )
+    assert result.attacks_root == selected.resolve()
