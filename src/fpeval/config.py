@@ -40,6 +40,10 @@ class EvaluationConfig:
     verify_checksums: bool = True
     extraction_cache: str | None = None
     save_predictions: bool = False
+    save_qualitative_samples: bool = True
+    qualitative_threshold_modes: tuple[str, ...] | None = None
+    write_separated_results: bool = True
+    separated_output_root: str | None = None
     overwrite: bool = False
     max_conditions: int | None = None
     run_metadata: dict[str, Any] = field(default_factory=dict)
@@ -48,6 +52,10 @@ class EvaluationConfig:
         self.targets = tuple(self.targets)
         self.scopes = tuple(self.scopes)
         self.pixel_threshold_modes = tuple(self.pixel_threshold_modes)
+        if self.qualitative_threshold_modes is None:
+            self.qualitative_threshold_modes = self.pixel_threshold_modes
+        else:
+            self.qualitative_threshold_modes = tuple(self.qualitative_threshold_modes)
         for name in (
             "prompt_modes", "setup_ids", "source_datasets", "categories",
             "directions", "loss_modes", "loss_formulations",
@@ -63,6 +71,10 @@ class EvaluationConfig:
         valid_thresholds = {"fixed_0_5", "image_f1", "clean_pixel_f1"}
         if not self.pixel_threshold_modes or set(self.pixel_threshold_modes) - valid_thresholds:
             raise ValueError("Unknown or empty pixel_threshold_modes")
+        if set(self.qualitative_threshold_modes) - set(self.pixel_threshold_modes):
+            raise ValueError(
+                "qualitative_threshold_modes must be selected pixel_threshold_modes"
+            )
         if self.batch_size < 1 or self.image_size < 1:
             raise ValueError("batch_size and image_size must be positive")
         if not 0 < self.aupro_fpr_limit <= 1:

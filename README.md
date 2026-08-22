@@ -161,6 +161,34 @@ reported as a complete benchmark.
   manifest_snapshot.json
   predictions/                 # only when save_predictions=true
   extracted_attacks/           # ZIP cache; ignored by numerical outputs
+
+<output_root>/<model>_separated/
+  setups/
+    <frozen_prompt|learnable_prompt>/
+      <setup_id>/
+        datasets/
+          <source>_to_<target>/
+            <scope>/
+              numerical/       # CSV/JSON results for only this slice
+              samples/
+                <threshold_mode>/
+                  <condition_id>/
+                    selection_manifest.json
+                    <selection>__<protocol_id>/
+                      clean.png
+                      adversarial.png
+                      difference_x10.png
+                      clean_heatmap.png
+                      adversarial_heatmap.png
+                      clean_overlay.png
+                      adversarial_overlay.png
+                      ground_truth_mask.png
+                      target_region_mask.png
+                      clean_pixel_prediction.png
+                      adversarial_pixel_prediction.png
+                      successful_target_pixel_flips.png
+                      heatmap_difference.png
+                      metrics.json
 ```
 
 `summary.csv` has one row per condition and pixel-threshold mode.
@@ -169,6 +197,16 @@ reported as a complete benchmark.
 pixel diagnostics, shifts, and realized norms. Low-resolution prediction maps
 can optionally be saved as compressed NPZ files; full 518-pixel maps are used
 for metrics regardless.
+
+The consolidated model directory remains the authoritative full-run result.
+By default, the evaluator also writes the input-shaped separated tree and
+qualitative examples for every selected threshold mode. Each condition chooses
+the strongest successful attack, a median successful attack when distinct,
+and the least-effective failure. Normal-to-anomalous examples use the same
+location-free top-k region as the reported success metric; anomalous-to-normal
+examples use the ground-truth anomaly region. Set
+`save_qualitative_samples: false` or `write_separated_results: false` to turn
+off either export, and use `separated_output_root` to choose another location.
 
 ## Adding another target model
 

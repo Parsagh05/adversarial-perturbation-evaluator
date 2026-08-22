@@ -80,3 +80,24 @@ def test_end_to_end_fixed_cohort(tmp_path):
         images = list(csv.DictReader(handle))
     assert len(images) == 2
     assert sum(int(row["attacked"]) for row in images) == 1
+    separated = (
+        tmp_path / "results" / "test_adapter_separated" / "setups"
+        / "frozen_prompt" / "steps500_eps2" / "datasets"
+        / "mvtec_to_mvtec" / "per_dataset"
+    )
+    assert (separated / "numerical" / "summary.csv").is_file()
+    assert (separated / "numerical" / "category_metrics.csv").is_file()
+    assert (separated / "numerical" / "per_image.csv").is_file()
+    manifests = list((separated / "samples" / "fixed_0_5").glob("*/selection_manifest.json"))
+    assert len(manifests) == 1
+    sample_folders = [path for path in manifests[0].parent.iterdir() if path.is_dir()]
+    assert len(sample_folders) == 1
+    for filename in (
+        "clean.png", "adversarial.png", "difference_x10.png",
+        "clean_heatmap.png", "adversarial_heatmap.png", "clean_overlay.png",
+        "adversarial_overlay.png", "ground_truth_mask.png",
+        "target_region_mask.png", "clean_pixel_prediction.png",
+        "adversarial_pixel_prediction.png", "successful_target_pixel_flips.png",
+        "heatmap_difference.png", "metrics.json",
+    ):
+        assert (sample_folders[0] / filename).is_file()

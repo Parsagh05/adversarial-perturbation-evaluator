@@ -30,6 +30,8 @@ from .metrics import (
     targeted_pixels,
     topk_region,
 )
+from .qualitative import export_samples
+from .structured import separated_root, slice_root, write_separated_numerical
 
 
 Prediction = tuple[float, np.ndarray]
@@ -209,7 +211,9 @@ def _condition_fields(attack: Attack) -> dict[str, Any]:
         "prompt_mode", "setup_id", "source_dataset", "target_dataset", "scope",
         "category", "direction", "source_label", "target_label", "loss_formulation",
         "loss_mode", "epsilon", "image_size", "optimization_steps",
-        "margin_topk_fraction", "prompt_provenance",
+        "margin_topk_fraction", "prompt_provenance", "normal_local_target",
+        "normal_target_region_fraction", "normal_target_center_x",
+        "normal_target_center_y",
     )
     return {name: attack.record.get(name, "") for name in names}
 
@@ -256,7 +260,10 @@ def _evaluate_condition(
     adapter: Any,
     thresholds: dict[str, dict[str, float]],
     config: EvaluationConfig,
-) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]], dict[str, np.ndarray]]:
+) -> tuple[
+    list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]],
+    dict[str, np.ndarray], torch.Tensor, dict[str, int],
+]:
     cohort = [samples_by_id[sample_id] for sample_id in attack.evaluation_ids]
     clean_cache = _postprocess_predictions(adapter, cohort, raw_clean_cache)
     attacked_set = set(attack.attacked_ids)
@@ -375,6 +382,7 @@ def _evaluate_condition(
                     "target_direction_score_shift": direction_sign * float(adversarial_scores[index] - clean_scores[index]),
                     "target_direction_map_shift": direction_sign * float((adversarial_maps[index] - clean_maps[index]).mean()),
                     "realized_linf": linf[sample.protocol_id],
+                    "location_free_topk_fraction": config.location_free_topk_fraction,
                     **{f"target_region_{key}": value for key, value in pixel.items()},
                     **{f"location_free_topk_{key}": value for key, value in topk.items()},
                 })
@@ -477,12 +485,15 @@ def _evaluate_condition(
         "clean_maps": np.stack([clean_cache[sample.protocol_id][1] for sample in cohort]),
         "adversarial_maps": np.stack([adversarial[sample.protocol_id][1] for sample in cohort]),
     }
-    return summary_rows, category_rows, per_image_rows, predictions
+    return summary_rows, category_rows, per_image_rows, predictions, delta, delta_index
 
 
 def evaluate(config: EvaluationConfig) -> Path:
     """Run all selected setup/scope conditions and return the model output root."""
     output = Path(config.output_root).expanduser().resolve() / config.model
+    structured_output = separated_root(
+        config.output_root, config.model, config.separated_output_root
+    )
     existing = output / "summary.csv"
     if existing.exists() and not config.overwrite:
         raise FileExistsError(f"Results already exist: {existing}; set overwrite=true")
@@ -528,7 +539,7 @@ def evaluate(config: EvaluationConfig) -> Path:
             thresholds = _calibrate_clean(target, fixed_samples, clean, config)
             threshold_payload["targets"][target] = thresholds
             for attack in target_attacks:
-                summary, categories, images, predictions = _evaluate_condition(
+                summary, categories, images, predictions, delta, delta_index = _evaluate_condition(
                     attack, indexed, raw_clean, adapter, thresholds, config
                 )
                 all_summary.extend(summary)
@@ -538,6 +549,27 @@ def evaluate(config: EvaluationConfig) -> Path:
                     prediction_dir = output / "predictions" / attack.record["prompt_mode"] / attack.record["setup_id"]
                     prediction_dir.mkdir(parents=True, exist_ok=True)
                     np.savez_compressed(prediction_dir / f"{attack.condition_id}.npz", **predictions)
+                if config.save_qualitative_samples:
+                    samples_root = slice_root(structured_output, attack.record) / "samples"
+                    for threshold_mode in config.qualitative_threshold_modes:
+                        selected_rows = [
+                            row for row in images
+                            if row["pixel_threshold_mode"] == threshold_mode
+                            and int(row["attacked"])
+                        ]
+                        export_samples(
+                            samples_root / threshold_mode,
+                            condition_id=attack.condition_id,
+                            rows=selected_rows,
+                            samples_by_id=indexed,
+                            sample_ids=predictions["sample_ids"].tolist(),
+                            clean_maps=predictions["clean_maps"],
+                            adversarial_maps=predictions["adversarial_maps"],
+                            delta=delta,
+                            delta_index=delta_index,
+                            image_size=config.image_size,
+                            gaussian_sigma=config.gaussian_sigma,
+                        )
         finally:
             adapter.close()
 
@@ -560,4 +592,14 @@ def evaluate(config: EvaluationConfig) -> Path:
     (output / "manifest_snapshot.json").write_text(
         json.dumps(manifest_snapshot, indent=2, default=_json_value), encoding="utf-8"
     )
+    if config.write_separated_results:
+        write_separated_numerical(
+            structured_output,
+            summary_rows=all_summary,
+            category_rows=all_categories,
+            image_rows=all_images,
+            manifest_records=manifest_snapshot,
+            thresholds=threshold_payload,
+            config=config,
+        )
     return output
