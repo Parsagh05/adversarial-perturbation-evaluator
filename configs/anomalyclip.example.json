@@ -1,0 +1,41 @@
+{
+  "attacks_root": "/kaggle/input/object-agnostic-attacks",
+  "output_root": "/kaggle/working/fixed_perturbation_results",
+  "model": "anomalyclip",
+  "mvtec_root": "/kaggle/input/mvtec-ad/mvtec_anomaly_detection",
+  "visa_root": "/kaggle/input/visa/VisA_20220922",
+  "targets": ["mvtec", "visa"],
+  "scopes": ["per_dataset", "per_category", "per_image"],
+  "prompt_modes": ["frozen_prompt", "learnable_prompt"],
+  "setup_ids": null,
+  "source_datasets": null,
+  "categories": null,
+  "directions": null,
+  "loss_modes": null,
+  "loss_formulations": null,
+  "model_kwargs_by_target": {
+    "mvtec": {
+      "repository": "/kaggle/working/AnomalyCLIP",
+      "checkpoint": "/kaggle/working/AnomalyCLIP/checkpoints/9_12_4_multiscale/epoch_15.pth",
+      "download_root": "/kaggle/working/clip-cache"
+    },
+    "visa": {
+      "repository": "/kaggle/working/AnomalyCLIP",
+      "checkpoint": "/kaggle/working/AnomalyCLIP/checkpoints/9_12_4_multiscale_visa/epoch_15.pth",
+      "download_root": "/kaggle/working/clip-cache"
+    }
+  },
+  "device": "cuda",
+  "batch_size": 2,
+  "image_size": 518,
+  "gaussian_sigma": 4.0,
+  "pixel_threshold_modes": ["fixed_0_5", "image_f1", "clean_pixel_f1"],
+  "pixel_success_min_flip_fraction": 0.5,
+  "location_free_topk_fraction": 0.2,
+  "verify_checksums": true,
+  "save_predictions": false,
+  "overwrite": false,
+  "run_metadata": {
+    "environment": "kaggle"
+  }
+}

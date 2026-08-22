@@ -1,0 +1,48 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "fixed-perturbation-evaluator"
+version = "0.1.0"
+description = "Manifest-driven black-box evaluation for fixed anomaly-detection perturbations"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+  "numpy>=1.24",
+  "Pillow>=9.5",
+  "scipy>=1.10",
+  "torch>=2.0",
+  "tqdm>=4.65",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7.4"]
+anomalyclip = [
+  "ftfy>=6.1",
+  "regex>=2023.0",
+  "scikit-learn>=1.2",
+  "timm==0.6.13",
+  "torchvision>=0.15",
+]
+aaclip = [
+  "einops==0.7.0",
+  "ftfy==6.2.0",
+  "kornia==0.6.9",
+  "opencv-python>=4.8",
+  "pandas>=1.5",
+  "scikit-learn>=1.2",
+  "tiktoken==0.7.0",
+  "timm==0.6.12",
+  "torchvision>=0.15",
+]
+
+[project.scripts]
+fpeval = "fpeval.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
