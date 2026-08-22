@@ -108,23 +108,30 @@ For AA-CLIP, install with `python -m pip install -e ".[aaclip]"`, start from
 model runtime libraries without replacing the environment's PyTorch with an
 old repository pin.
 
-Each adapter expects an existing checkout of its official repository and the
-released checkpoints. It never downloads or
-copies another evaluator. The target-specific checkpoint paths are configured
-under `model_kwargs_by_target`; MVTec and VisA can therefore use different
-released zero-shot checkpoints.
+For local/server runs, each adapter expects an existing checkout of its official
+repository and released checkpoints. Target-specific paths are configured under
+`model_kwargs_by_target`.
 
-For Kaggle, attach the attack ZIP dataset, MVTec AD, VisA, and the selected
-model checkout/checkpoint dataset. Install this package, copy and edit the example
-JSON under `/kaggle/working`, then run:
+For Kaggle, use `notebooks/kaggle_anomalyclip.ipynb` or
+`notebooks/kaggle_aaclip.ipynb`, enable GPU and Internet, and attach only:
 
-```bash
-FPEVAL_CONFIG=/kaggle/working/anomalyclip.json \
-python scripts/kaggle_run_anomalyclip.py
-```
+- MVTec AD;
+- VisA;
+- the generated perturbation dataset containing `setups/`.
 
-The corresponding AA-CLIP files are `notebooks/kaggle_aaclip.ipynb` and
-`scripts/kaggle_run_aaclip.py`.
+The notebooks clone this evaluator and the selected official model repository
+into `/kaggle/working` automatically. They discover dataset mounts by structure,
+so Kaggle slug/capitalization differences such as
+`MVTec-AD/mvtec_anomaly_detection`, `VisA-AD/VisA_20220922`, and
+`perturbation-generated/setups` do not require path edits. The AA-CLIP notebook
+also downloads its public adapter-checkpoint dataset when it is not attached and
+downloads/checksum-verifies the exact OpenAI ViT-L/14@336px base model.
+
+The first notebook cell selects prompt modes, normalized setup IDs, scopes,
+sources, categories, directions, and losses. With `SETUP_IDS=None`, the evaluator
+recursively processes every available setup under both `frozen_prompt/` and
+`learnable_prompt/`; filters are applied only after the mounted inventory is
+printed.
 
 Both notebooks calculate thresholds automatically during their evaluation
 run. For every target/category, clean image F1 and clean pixel F1 thresholds
@@ -139,7 +146,7 @@ reported as a complete benchmark.
 ## Outputs
 
 ```text
-<output_root>/anomalyclip/
+<output_root>/<model>/
   summary.csv
   category_metrics.csv
   per_image.csv
