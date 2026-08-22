@@ -103,6 +103,9 @@ cp configs/anomalyclip.example.json anomalyclip.json
 fpeval --config anomalyclip.json
 ```
 
+The AnomalyCLIP extra includes `thop`, which the official repository imports
+while loading its model implementation.
+
 For AA-CLIP, install with `python -m pip install -e ".[aaclip]"`, start from
 `configs/aaclip.example.json`, and run the same command. These extras install
 model runtime libraries without replacing the environment's PyTorch with an
