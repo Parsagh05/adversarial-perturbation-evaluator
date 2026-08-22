@@ -39,6 +39,11 @@ def test_user_can_select_the_perturbation_input(tmp_path: Path):
     (selected / "setups" / "frozen_prompt" / "steps500_eps2").mkdir(parents=True)
 
     result = discover_kaggle_inputs(
-        tmp_path, attacks_root=selected / "setups"
+        tmp_path,
+        mvtec_root=mvtec,
+        visa_root=visa.parent,
+        attacks_root=selected / "setups",
     )
+    assert result.mvtec_root == mvtec.resolve()
+    assert result.visa_root == visa.parent.resolve()
     assert result.attacks_root == selected.resolve()

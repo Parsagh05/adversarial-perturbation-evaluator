@@ -86,9 +86,36 @@ def _selected_attack_root(value: str | Path) -> Path:
     return selected
 
 
+def _selected_mvtec_root(value: str | Path) -> Path:
+    selected = Path(value).expanduser().resolve()
+    if not selected.is_dir() or not any(selected.glob("*/test/good")):
+        raise ValueError(
+            "Selected MVTec input must contain <category>/test/good: "
+            f"{selected}"
+        )
+    return selected
+
+
+def _selected_visa_root(value: str | Path) -> Path:
+    selected = Path(value).expanduser().resolve()
+    manifests = (
+        selected / "split_csv" / "1cls.csv",
+        selected / "split_csv" / "1cls.csv.csv",
+        selected / "1cls.csv",
+    )
+    if not selected.is_dir() or not any(path.is_file() for path in manifests):
+        raise ValueError(
+            "Selected VisA input must contain split_csv/1cls.csv: "
+            f"{selected}"
+        )
+    return selected
+
+
 def discover_kaggle_inputs(
     root: str | Path = "/kaggle/input",
     *,
+    mvtec_root: str | Path | None = None,
+    visa_root: str | Path | None = None,
     attacks_root: str | Path | None = None,
 ) -> KaggleInputs:
     """Discover target datasets and validate an optional selected attack root."""
@@ -97,8 +124,16 @@ def discover_kaggle_inputs(
     if not root.is_dir():
         raise FileNotFoundError(f"Kaggle input root not found: {root}")
     return KaggleInputs(
-        mvtec_root=_unique(_mvtec_candidates(root), "MVTec AD"),
-        visa_root=_unique(_visa_candidates(root), "VisA"),
+        mvtec_root=(
+            _selected_mvtec_root(mvtec_root)
+            if mvtec_root is not None
+            else _unique(_mvtec_candidates(root), "MVTec AD")
+        ),
+        visa_root=(
+            _selected_visa_root(visa_root)
+            if visa_root is not None
+            else _unique(_visa_candidates(root), "VisA")
+        ),
         attacks_root=(
             _selected_attack_root(attacks_root)
             if attacks_root is not None
