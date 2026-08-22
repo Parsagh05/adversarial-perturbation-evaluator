@@ -34,6 +34,14 @@ def separated_root(output_root: str | Path, model: str, selected: str | None) ->
     return Path(output_root).expanduser().resolve() / f"{safe_component(model)}_separated"
 
 
+def model_sibling_root(
+    output_root: str | Path, model: str, suffix: str, selected: str | None
+) -> Path:
+    if selected:
+        return Path(selected).expanduser().resolve()
+    return Path(output_root).expanduser().resolve() / f"{safe_component(model)}{suffix}"
+
+
 def slice_root(root: Path, record: dict[str, Any]) -> Path:
     dataset_pair = (
         f"{safe_component(record['source_dataset'])}_to_"

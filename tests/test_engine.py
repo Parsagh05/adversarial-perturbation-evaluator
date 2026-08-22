@@ -80,15 +80,23 @@ def test_end_to_end_fixed_cohort(tmp_path):
         images = list(csv.DictReader(handle))
     assert len(images) == 2
     assert sum(int(row["attacked"]) for row in images) == 1
+    results_root = tmp_path / "results"
     separated = (
-        tmp_path / "results" / "test_adapter_separated" / "setups"
+        results_root / "test_adapter_separated" / "setups"
         / "frozen_prompt" / "steps500_eps2" / "datasets"
         / "mvtec_to_mvtec" / "per_dataset"
     )
     assert (separated / "numerical" / "summary.csv").is_file()
     assert (separated / "numerical" / "category_metrics.csv").is_file()
     assert (separated / "numerical" / "per_image.csv").is_file()
-    manifests = list((separated / "samples" / "fixed_0_5").glob("*/selection_manifest.json"))
+    separated_samples = (
+        results_root / "test_adapter_samples_separated" / "setups"
+        / "frozen_prompt" / "steps500_eps2" / "datasets"
+        / "mvtec_to_mvtec" / "per_dataset"
+    )
+    manifests = list(
+        (separated_samples / "fixed_0_5").glob("*/selection_manifest.json")
+    )
     assert len(manifests) == 1
     sample_folders = [path for path in manifests[0].parent.iterdir() if path.is_dir()]
     assert len(sample_folders) == 1
@@ -101,3 +109,13 @@ def test_end_to_end_fixed_cohort(tmp_path):
         "heatmap_difference.png", "metrics.json",
     ):
         assert (sample_folders[0] / filename).is_file()
+    assert list(
+        (results_root / "test_adapter_samples" / "fixed_0_5").glob(
+            "*/selection_manifest.json"
+        )
+    )
+    for archive in (
+        "test_adapter.zip", "test_adapter_samples.zip",
+        "test_adapter_separated.zip", "test_adapter_samples_separated.zip",
+    ):
+        assert (results_root / archive).is_file()

@@ -162,6 +162,9 @@ reported as a complete benchmark.
   predictions/                 # only when save_predictions=true
   extracted_attacks/           # ZIP cache; ignored by numerical outputs
 
+<output_root>/<model>_samples/
+  <threshold_mode>/<condition_id>/<selection>__<protocol_id>/...
+
 <output_root>/<model>_separated/
   setups/
     <frozen_prompt|learnable_prompt>/
@@ -170,25 +173,15 @@ reported as a complete benchmark.
           <source>_to_<target>/
             <scope>/
               numerical/       # CSV/JSON results for only this slice
-              samples/
-                <threshold_mode>/
-                  <condition_id>/
-                    selection_manifest.json
-                    <selection>__<protocol_id>/
-                      clean.png
-                      adversarial.png
-                      difference_x10.png
-                      clean_heatmap.png
-                      adversarial_heatmap.png
-                      clean_overlay.png
-                      adversarial_overlay.png
-                      ground_truth_mask.png
-                      target_region_mask.png
-                      clean_pixel_prediction.png
-                      adversarial_pixel_prediction.png
-                      successful_target_pixel_flips.png
-                      heatmap_difference.png
-                      metrics.json
+
+<output_root>/<model>_samples_separated/
+  setups/<prompt_mode>/<setup_id>/datasets/<source>_to_<target>/<scope>/
+    <threshold_mode>/<condition_id>/<selection>__<protocol_id>/...
+
+<output_root>/<model>.zip
+<output_root>/<model>_samples.zip
+<output_root>/<model>_separated.zip
+<output_root>/<model>_samples_separated.zip
 ```
 
 `summary.csv` has one row per condition and pixel-threshold mode.
@@ -199,14 +192,19 @@ can optionally be saved as compressed NPZ files; full 518-pixel maps are used
 for metrics regardless.
 
 The consolidated model directory remains the authoritative full-run result.
-By default, the evaluator also writes the input-shaped separated tree and
-qualitative examples for every selected threshold mode. Each condition chooses
+Samples are kept in their own consolidated directory, and both numerical
+results and samples also receive independent input-shaped separated trees.
+All four directories are archived automatically after a successful run. The
+disposable `extracted_attacks` input cache is excluded from the result ZIP.
+Each condition chooses
 the strongest successful attack, a median successful attack when distinct,
 and the least-effective failure. Normal-to-anomalous examples use the same
 location-free top-k region as the reported success metric; anomalous-to-normal
 examples use the ground-truth anomaly region. Set
-`save_qualitative_samples: false` or `write_separated_results: false` to turn
-off either export, and use `separated_output_root` to choose another location.
+`save_qualitative_samples: false`, `write_separated_results: false`, or
+`create_output_archives: false` to turn off an export. Custom destinations are
+available through `samples_output_root`, `separated_output_root`, and
+`separated_samples_output_root`.
 
 ## Adding another target model
 

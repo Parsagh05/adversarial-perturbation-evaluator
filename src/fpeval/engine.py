@@ -18,6 +18,7 @@ import torch.nn.functional as F
 from tqdm.auto import tqdm
 
 from .adapters import create_adapter
+from .archive import archive_directory
 from .attacks import Attack, discover_attacks, materialize_input
 from .config import EvaluationConfig
 from .data import Sample, discover_dataset, load_image, load_mask, sample_index
@@ -31,7 +32,12 @@ from .metrics import (
     topk_region,
 )
 from .qualitative import export_samples
-from .structured import separated_root, slice_root, write_separated_numerical
+from .structured import (
+    model_sibling_root,
+    separated_root,
+    slice_root,
+    write_separated_numerical,
+)
 
 
 Prediction = tuple[float, np.ndarray]
@@ -494,6 +500,15 @@ def evaluate(config: EvaluationConfig) -> Path:
     structured_output = separated_root(
         config.output_root, config.model, config.separated_output_root
     )
+    samples_output = model_sibling_root(
+        config.output_root, config.model, "_samples", config.samples_output_root
+    )
+    structured_samples_output = model_sibling_root(
+        config.output_root,
+        config.model,
+        "_samples_separated",
+        config.separated_samples_output_root,
+    )
     existing = output / "summary.csv"
     if existing.exists() and not config.overwrite:
         raise FileExistsError(f"Results already exist: {existing}; set overwrite=true")
@@ -550,25 +565,30 @@ def evaluate(config: EvaluationConfig) -> Path:
                     prediction_dir.mkdir(parents=True, exist_ok=True)
                     np.savez_compressed(prediction_dir / f"{attack.condition_id}.npz", **predictions)
                 if config.save_qualitative_samples:
-                    samples_root = slice_root(structured_output, attack.record) / "samples"
+                    separated_sample_slice = slice_root(
+                        structured_samples_output, attack.record
+                    )
                     for threshold_mode in config.qualitative_threshold_modes:
                         selected_rows = [
                             row for row in images
                             if row["pixel_threshold_mode"] == threshold_mode
                             and int(row["attacked"])
                         ]
-                        export_samples(
-                            samples_root / threshold_mode,
-                            condition_id=attack.condition_id,
-                            rows=selected_rows,
+                        sample_arguments = dict(
+                            condition_id=attack.condition_id, rows=selected_rows,
                             samples_by_id=indexed,
                             sample_ids=predictions["sample_ids"].tolist(),
                             clean_maps=predictions["clean_maps"],
                             adversarial_maps=predictions["adversarial_maps"],
-                            delta=delta,
-                            delta_index=delta_index,
+                            delta=delta, delta_index=delta_index,
                             image_size=config.image_size,
                             gaussian_sigma=config.gaussian_sigma,
+                        )
+                        export_samples(
+                            samples_output / threshold_mode, **sample_arguments
+                        )
+                        export_samples(
+                            separated_sample_slice / threshold_mode, **sample_arguments
                         )
         finally:
             adapter.close()
@@ -602,4 +622,12 @@ def evaluate(config: EvaluationConfig) -> Path:
             thresholds=threshold_payload,
             config=config,
         )
+    if config.create_output_archives:
+        # Extraction is a disposable input cache, not an evaluation result.
+        archive_directory(output, exclude_top_level=("extracted_attacks",))
+        if config.save_qualitative_samples:
+            archive_directory(samples_output)
+            archive_directory(structured_samples_output)
+        if config.write_separated_results:
+            archive_directory(structured_output)
     return output

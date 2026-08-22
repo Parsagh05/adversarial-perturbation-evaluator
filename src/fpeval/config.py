@@ -42,8 +42,11 @@ class EvaluationConfig:
     save_predictions: bool = False
     save_qualitative_samples: bool = True
     qualitative_threshold_modes: tuple[str, ...] | None = None
+    samples_output_root: str | None = None
     write_separated_results: bool = True
     separated_output_root: str | None = None
+    separated_samples_output_root: str | None = None
+    create_output_archives: bool = True
     overwrite: bool = False
     max_conditions: int | None = None
     run_metadata: dict[str, Any] = field(default_factory=dict)
