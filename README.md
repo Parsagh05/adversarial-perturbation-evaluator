@@ -196,7 +196,9 @@ Samples are kept in their own consolidated directory, and both numerical
 results and samples also receive independent input-shaped separated trees.
 All four directories are archived automatically after a successful run. The
 disposable `extracted_attacks` input cache is excluded from the result ZIP.
-Each condition chooses
+By default, qualitative selection uses only `clean_pixel_f1`: the per-category
+pixel threshold calibrated on clean predictions that maximizes pixel F1.
+Numerical results still report every selected threshold mode. Each condition chooses
 the strongest successful attack, a median successful attack when distinct,
 and the least-effective failure. Normal-to-anomalous examples use the same
 location-free top-k region as the reported success metric; anomalous-to-normal
