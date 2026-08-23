@@ -261,9 +261,14 @@ def discover_attacks(
                 raise FileNotFoundError(attack.perturbation_path)
             if attack.condition_id in seen:
                 previous = seen[attack.condition_id]
-                previous_hash = str(previous.record.get("artifact_sha256") or "")
-                current_hash = str(attack.record.get("artifact_sha256") or "")
-                if previous_hash and previous_hash == current_hash:
+                previous_hash = str(previous.record.get("artifact_sha256") or "").lower()
+                current_hash = str(attack.record.get("artifact_sha256") or "").lower()
+                if not previous_hash or not current_hash:
+                    # Manifests without recorded checksums still describe the same
+                    # artifact when the extracted files are byte-identical.
+                    previous_hash = file_sha256(previous.perturbation_path)
+                    current_hash = file_sha256(attack.perturbation_path)
+                if previous_hash == current_hash:
                     # A complete Kaggle setup commonly includes both the
                     # extracted scope directory and a portable ZIP of it.
                     continue

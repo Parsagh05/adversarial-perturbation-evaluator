@@ -33,10 +33,11 @@ def optimal_f1(labels: Sequence[int], scores: Sequence[float]) -> dict[str, floa
     return {"threshold": float(thresholds[index]), "f1": float(f1[index])}
 
 
-def performance(labels: Sequence[int], scores: Sequence[float]) -> dict[str, float]:
+def _summary(labels: Sequence[int], scores: Sequence[float]) -> tuple[dict[str, float], float]:
+    """Return performance metrics and the F1-optimal threshold from one sort."""
     labels = np.asarray(labels, dtype=np.uint8)
     if np.unique(labels).size < 2:
-        return {"auroc": np.nan, "ap": np.nan, "f1_max": np.nan}
+        return {"auroc": np.nan, "ap": np.nan, "f1_max": np.nan}, np.nan
     fp, tp, thresholds = _curve(labels, scores)
     fpr, tpr = np.r_[0, fp / fp[-1]], np.r_[0, tp / tp[-1]]
     trap = np.trapezoid if hasattr(np, "trapezoid") else np.trapz
@@ -44,8 +45,14 @@ def performance(labels: Sequence[int], scores: Sequence[float]) -> dict[str, flo
     precision, recall = tp / (tp + fp), tp / tp[-1]
     ap = float(np.sum(np.diff(np.r_[0, recall]) * precision))
     fn = int(labels.sum()) - tp
-    f1 = np.divide(2 * tp, 2 * tp + fp + fn, out=np.zeros_like(tp), where=(2 * tp + fp + fn) > 0)
-    return {"auroc": 100 * auroc, "ap": 100 * ap, "f1_max": 100 * float(f1.max())}
+    denominator = 2 * tp + fp + fn
+    f1 = np.divide(2 * tp, denominator, out=np.zeros_like(tp), where=denominator > 0)
+    metrics = {"auroc": 100 * auroc, "ap": 100 * ap, "f1_max": 100 * float(f1.max())}
+    return metrics, float(thresholds[int(np.argmax(f1))])
+
+
+def performance(labels: Sequence[int], scores: Sequence[float]) -> dict[str, float]:
+    return _summary(labels, scores)[0]
 
 
 def aupro(masks: np.ndarray, maps: np.ndarray, *, fpr_limit: float = 0.3, thresholds: int = 200) -> float:
@@ -53,21 +60,33 @@ def aupro(masks: np.ndarray, maps: np.ndarray, *, fpr_limit: float = 0.3, thresh
     maps = np.asarray(maps, dtype=np.float32)
     negatives = ~masks
     negative_count = int(negatives.sum())
-    regions: list[tuple[int, np.ndarray]] = []
+    # Sorting each region's scores once turns every threshold into a binary
+    # search, instead of re-thresholding the whole stack for each candidate.
+    region_scores: list[np.ndarray] = []
     for image_index, mask in enumerate(masks):
         components, count = connected_components(mask, structure=np.ones((3, 3)))
-        regions.extend((image_index, components == component) for component in range(1, count + 1))
-    if not negative_count or not regions:
+        for component in range(1, count + 1):
+            region_scores.append(np.sort(maps[image_index][components == component]))
+    if not negative_count or not region_scores:
         return np.nan
     flat = maps.reshape(-1)
     stride = max(1, int(np.ceil(flat.size / 1_000_000)))
     sampled = flat[::stride]
-    candidates = np.unique(np.quantile(sampled, np.linspace(1, 0, min(thresholds, len(sampled)))))[::-1]
-    fprs, pros = [0.0], [0.0]
-    for threshold in candidates:
-        prediction = maps >= threshold
-        fprs.append(float((prediction & negatives).sum()) / negative_count)
-        pros.append(float(np.mean([prediction[index][region].mean() for index, region in regions])))
+    # Compare in the map dtype: NumPy 1.x silently narrowed a float64 threshold
+    # to float32 here, so making it explicit is both faithful and version-stable.
+    candidates = np.unique(
+        np.quantile(sampled, np.linspace(1, 0, min(thresholds, len(sampled))))
+    )[::-1].astype(maps.dtype)
+    negative_scores = np.sort(maps[negatives])
+    above = negative_scores.size - np.searchsorted(negative_scores, candidates, side="left")
+    fprs = np.r_[0.0, above / negative_count]
+    # Stack per-threshold so each row of region rates is contiguous; this keeps
+    # the reduction order identical to averaging one threshold at a time.
+    region_rates = np.stack([
+        (scores.size - np.searchsorted(scores, candidates, side="left")) / scores.size
+        for scores in region_scores
+    ], axis=-1)
+    pros = np.r_[0.0, region_rates.mean(axis=-1)]
     x_raw, y_raw = np.asarray(fprs), np.asarray(pros)
     order = np.argsort(x_raw)
     x_raw, y_raw = x_raw[order], y_raw[order]
@@ -83,10 +102,11 @@ def aupro(masks: np.ndarray, maps: np.ndarray, *, fpr_limit: float = 0.3, thresh
 def pixel_performance(masks: np.ndarray, maps: np.ndarray, *, fpr_limit: float, thresholds: int) -> dict[str, float]:
     flat_masks = np.asarray(masks, dtype=np.uint8).reshape(-1)
     flat_maps = np.asarray(maps, dtype=np.float32).reshape(-1)
-    base = performance(flat_masks, flat_maps)
+    # One sorted curve serves AUROC, F1-max, and the F1-optimal threshold.
+    base, f1_threshold = _summary(flat_masks, flat_maps)
     return {
         "p_auroc": base["auroc"], "p_f1_max": base["f1_max"],
-        "p_f1_threshold": optimal_f1(flat_masks, flat_maps)["threshold"] if np.unique(flat_masks).size == 2 else np.nan,
+        "p_f1_threshold": f1_threshold,
         "aupro": aupro(masks, maps, fpr_limit=fpr_limit, thresholds=thresholds),
     }
 

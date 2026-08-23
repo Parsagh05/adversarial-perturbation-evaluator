@@ -29,9 +29,15 @@ anomalyclip = [
 aaclip = [
   "einops==0.7.0",
   "ftfy==6.2.0",
+  # model/adapter_modules.py, model/transformer.py, and forward_utils.py all
+  # import ipdb unconditionally, so the official repository cannot be loaded
+  # without it even though its requirements.txt omits it.
+  "ipdb>=0.13",
   "kornia==0.6.9",
   "opencv-python>=4.8",
   "pandas>=1.5",
+  # model/tokenizer.py imports regex, also missing from the official list.
+  "regex>=2023.0",
   "scikit-learn>=1.2",
   "tiktoken==0.7.0",
   "timm==0.6.12",

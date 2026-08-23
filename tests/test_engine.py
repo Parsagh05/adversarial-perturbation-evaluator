@@ -67,7 +67,6 @@ def test_end_to_end_fixed_cohort(tmp_path):
         mvtec_root=str(mvtec), targets=("mvtec",), scopes=("per_dataset",),
         device="cpu", image_size=8, batch_size=2, gaussian_sigma=0,
         pixel_threshold_modes=("fixed_0_5",),
-        qualitative_threshold_modes=("fixed_0_5",),
     ))
     assert (output / "summary.csv").is_file()
     assert (output / "category_metrics.csv").is_file()
@@ -107,7 +106,7 @@ def test_end_to_end_fixed_cohort(tmp_path):
         "adversarial_overlay.png", "ground_truth_mask.png",
         "target_region_mask.png", "clean_pixel_prediction.png",
         "adversarial_pixel_prediction.png", "successful_target_pixel_flips.png",
-        "heatmap_difference.png", "metrics.json",
+        "heatmap_difference.png", "metrics.json", "description.md",
     ):
         assert (sample_folders[0] / filename).is_file()
     assert list(

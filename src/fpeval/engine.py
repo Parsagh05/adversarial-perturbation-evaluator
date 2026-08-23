@@ -266,11 +266,18 @@ def _evaluate_condition(
     adapter: Any,
     thresholds: dict[str, dict[str, float]],
     config: EvaluationConfig,
+    clean_metrics: dict[tuple[str, ...], dict[str, dict[str, float]]] | None = None,
 ) -> tuple[
     list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]],
     dict[str, np.ndarray], torch.Tensor, dict[str, int],
 ]:
     cohort = [samples_by_id[sample_id] for sample_id in attack.evaluation_ids]
+    # Clean predictions and their postprocessing depend only on the cohort, so
+    # identical cohorts across conditions reuse one set of clean-side metrics.
+    cohort_key = tuple(sample.protocol_id for sample in cohort)
+    if clean_metrics is None:
+        clean_metrics = {}
+    clean_metric_cache = clean_metrics.setdefault(cohort_key, {})
     clean_cache = _postprocess_predictions(adapter, cohort, raw_clean_cache)
     attacked_set = set(attack.attacked_ids)
     attacked_samples = [sample for sample in cohort if sample.protocol_id in attacked_set]
@@ -312,12 +319,18 @@ def _evaluate_condition(
             config.image_size, config.gaussian_sigma,
         )
         masks = np.stack([load_mask(sample, config.image_size) for sample in category_samples])
-        clean_image_perf = performance(labels, clean_scores)
+        cached = clean_metric_cache.get(category)
+        if cached is None:
+            cached = {
+                "image": performance(labels, clean_scores),
+                "pixel": pixel_performance(
+                    masks, clean_maps, fpr_limit=config.aupro_fpr_limit,
+                    thresholds=config.aupro_thresholds,
+                ),
+            }
+            clean_metric_cache[category] = cached
+        clean_image_perf, clean_pixel_perf = cached["image"], cached["pixel"]
         adversarial_image_perf = performance(labels, adversarial_scores)
-        clean_pixel_perf = pixel_performance(
-            masks, clean_maps, fpr_limit=config.aupro_fpr_limit,
-            thresholds=config.aupro_thresholds,
-        )
         adversarial_pixel_perf = pixel_performance(
             masks, adversarial_maps, fpr_limit=config.aupro_fpr_limit,
             thresholds=config.aupro_thresholds,
@@ -393,6 +406,11 @@ def _evaluate_condition(
                     **{f"location_free_topk_{key}": value for key, value in topk.items()},
                 })
 
+            attacked_linf = [
+                {"realized_linf": linf[sample.protocol_id]}
+                for sample in category_samples
+                if sample.protocol_id in attacked_set
+            ]
             clean_class = classification(labels, clean_image_pred)
             adversarial_class = classification(labels, adversarial_image_pred)
             region_eligible = sum(int(row["pixel_eligible_count"]) for row in pixel_records)
@@ -440,8 +458,11 @@ def _evaluate_condition(
                 "location_free_topk_pixel_flip_count": topk_flips,
                 "location_free_topk_pixel_success_eligible_count": topk_success_eligible,
                 "location_free_topk_pixel_success_count": topk_successes,
-                "realized_linf_mean": float(np.mean([linf[sample.protocol_id] for sample in category_samples if sample.protocol_id in attacked_set])),
-                "realized_linf_max": float(np.max([linf[sample.protocol_id] for sample in category_samples if sample.protocol_id in attacked_set])),
+                "realized_linf_mean": _mean(attacked_linf, "realized_linf"),
+                "realized_linf_max": (
+                    float(np.max([row["realized_linf"] for row in attacked_linf]))
+                    if attacked_linf else np.nan
+                ),
             }
             category_rows.append(row)
 
@@ -552,10 +573,12 @@ def evaluate(config: EvaluationConfig) -> Path:
             raw_clean = _predict_clean(adapter, fixed_samples, config)
             clean = _postprocess_predictions(adapter, fixed_samples, raw_clean)
             thresholds = _calibrate_clean(target, fixed_samples, clean, config)
+            clean_metrics: dict[tuple[str, ...], dict[str, dict[str, float]]] = {}
             threshold_payload["targets"][target] = thresholds
             for attack in target_attacks:
                 summary, categories, images, predictions, delta, delta_index = _evaluate_condition(
-                    attack, indexed, raw_clean, adapter, thresholds, config
+                    attack, indexed, raw_clean, adapter, thresholds, config,
+                    clean_metrics=clean_metrics,
                 )
                 all_summary.extend(summary)
                 all_categories.extend(categories)

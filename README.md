@@ -109,7 +109,9 @@ while loading its model implementation.
 For AA-CLIP, install with `python -m pip install -e ".[aaclip]"`, start from
 `configs/aaclip.example.json`, and run the same command. These extras install
 model runtime libraries without replacing the environment's PyTorch with an
-old repository pin.
+old repository pin. The AA-CLIP extra also includes `ipdb` and `regex`, which
+the official repository imports from `model/`, `forward_utils.py`, and its
+tokenizer but omits from its own `requirements.txt`.
 
 For local/server runs, each adapter expects an existing checkout of its official
 repository and released checkpoints. Target-specific paths are configured under
@@ -196,13 +198,89 @@ Samples are kept in their own consolidated directory, and both numerical
 results and samples also receive independent input-shaped separated trees.
 All four directories are archived automatically after a successful run. The
 disposable `extracted_attacks` input cache is excluded from the result ZIP.
-By default, qualitative selection uses only `clean_pixel_f1`: the per-category
-pixel threshold calibrated on clean predictions that maximizes pixel F1.
-Numerical results still report every selected threshold mode. Each condition chooses
-the strongest successful attack, a median successful attack when distinct,
-and the least-effective failure. Normal-to-anomalous examples use the same
-location-free top-k region as the reported success metric; anomalous-to-normal
-examples use the ground-truth anomaly region. Set
+
+### Qualitative samples
+
+Each condition selects representative attacked images with two independent
+families of criteria.
+
+Threshold-based, ranked by the targeted pixel flip rate at the exported
+threshold:
+
+| selection | chosen because |
+| --- | --- |
+| `strongest_success` | highest targeted pixel flip rate among successful attacks |
+| `median_success` | median successful attack, i.e. a typical rather than a best case |
+| `worst_failure` | least-effective attack that still had pixels eligible to flip |
+
+Threshold-free, needing no pixel threshold at all:
+
+| selection | chosen because | drives |
+| --- | --- | --- |
+| `largest_score_shift` | largest directional image-score shift | image AUROC, image AP, image F1-max |
+| `largest_map_shift` | largest directional anomaly-map shift | pixel AUROC, pixel F1-max, AUPRO |
+
+Directional shifts are signed so that positive always means *toward the attack
+target*. An image chosen by several criteria is exported once and carries every
+reason. Because the threshold-free picks do not depend on any threshold, they
+repeat identically across threshold modes; exporting a single
+`qualitative_threshold_modes` entry avoids duplicating them.
+
+Normal-to-anomalous examples use the same location-free top-k region as the
+reported success metric; anomalous-to-normal examples use the ground-truth
+anomaly region.
+
+Every sample folder holds the clean and adversarial images, a x10 difference
+image, both heatmaps and overlays, the ground-truth mask, the target-region
+mask, both pixel predictions, the successful-flip map, a signed heatmap
+difference, `metrics.json`, and a `description.md`. `metrics.json` repeats the
+full per-image row plus a machine-readable `selection_reasons` list;
+`description.md` is the human-readable version:
+
+```markdown
+# largest_score_shift - `test/bottle/good/001`
+
+- **Condition**: `frozen_prompt__steps500_eps2__mvtec__mvtec__per_dataset__all__normal_to_abnormal__ce_focal_dice__global`
+- **Direction**: normal_to_abnormal (source label 0 -> target label 1)
+- **Image**: mvtec/bottle/good (ground-truth label 0)
+- **Pixel threshold mode**: `fixed_0_5` (threshold 0.5)
+- **Target region**: location-free top-k region
+
+## Why this image was selected
+
+- **largest_score_shift** (threshold-free): Largest threshold-free shift of the
+  image score toward the target class (+0.000057) among 6 attacked images. This
+  quantity needs no pixel threshold and is what drives image AUROC, image AP,
+  and image F1-max.
+
+## Before vs after
+
+| quantity | clean | adversarial | change |
+| --- | --- | --- | --- |
+| image score | 0.437253 | 0.437311 | +5.73993e-05 |
+| image prediction | 0 (normal) | 0 (normal) | unchanged |
+| anomaly map mean | 0.437254 | 0.437311 | +5.74291e-05 |
+| anomaly map max | 0.441194 | 0.444205 | +0.00301051 |
+
+- targeted image success: **no**
+- target-direction score shift: +5.73993e-05
+- target-direction map shift: +5.73590e-05
+
+## Targeted pixels in the location-free top-k region
+
+- pixels in region: 53665
+- eligible (clean-predicted as the source class): 53665
+- flipped to the target class: 0 (0.00%)
+- counted as a successful attack: **no**
+
+## Perturbation
+
+- realized L-inf: 0.08
+- mean absolute change: 0.0238158
+- PSNR: 30.54 dB
+```
+
+Set
 `save_qualitative_samples: false`, `write_separated_results: false`, or
 `create_output_archives: false` to turn off an export. Custom destinations are
 available through `samples_output_root`, `separated_output_root`, and

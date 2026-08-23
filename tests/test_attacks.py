@@ -67,3 +67,24 @@ def test_directory_and_portable_zip_are_deduplicated(tmp_path):
     bundles = materialize_input(tmp_path, tmp_path / "cache")
     attacks = discover_attacks(bundles, scopes=("per_dataset",), targets=("mvtec",))
     assert len(attacks) == 1
+
+
+def test_duplicate_condition_without_manifest_checksum_is_deduplicated(tmp_path):
+    bundle = _write_bundle(tmp_path)
+    # Drop the recorded checksum from both copies of the same artifact.
+    manifest = bundle / "attack_manifest.csv"
+    rows = list(csv.DictReader(manifest.open(newline="")))
+    fields = list(rows[0])
+    rows[0]["artifact_sha256"] = ""
+    with manifest.open("w", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fields)
+        writer.writeheader()
+        writer.writerows(rows)
+    archive = tmp_path / "canonical_clip_per_dataset_mvtec_steps500_eps2_learnable_prompt.zip"
+    with zipfile.ZipFile(archive, "w") as package:
+        for path in bundle.rglob("*"):
+            if path.is_file():
+                package.write(path, Path("canonical_clip_per_dataset") / path.relative_to(bundle))
+    bundles = materialize_input(tmp_path, tmp_path / "cache")
+    attacks = discover_attacks(bundles, scopes=("per_dataset",), targets=("mvtec",))
+    assert len(attacks) == 1

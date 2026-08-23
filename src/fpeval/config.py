@@ -56,7 +56,7 @@ class EvaluationConfig:
         self.scopes = tuple(self.scopes)
         self.pixel_threshold_modes = tuple(self.pixel_threshold_modes)
         if self.qualitative_threshold_modes is None:
-            self.qualitative_threshold_modes = ("clean_pixel_f1",)
+            self.qualitative_threshold_modes = self.pixel_threshold_modes
         else:
             self.qualitative_threshold_modes = tuple(self.qualitative_threshold_modes)
         for name in (
