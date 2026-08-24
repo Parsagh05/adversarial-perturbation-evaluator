@@ -649,7 +649,6 @@ def evaluate(config: EvaluationConfig) -> Path:
         # Extraction is a disposable input cache, not an evaluation result.
         archive_directory(output, exclude_top_level=("extracted_attacks",))
         if config.save_qualitative_samples:
-            archive_directory(samples_output)
             archive_directory(structured_samples_output)
         if config.write_separated_results:
             archive_directory(structured_output)

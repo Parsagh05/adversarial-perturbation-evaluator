@@ -181,7 +181,6 @@ reported as a complete benchmark.
     <threshold_mode>/<condition_id>/<selection>__<protocol_id>/...
 
 <output_root>/<model>.zip
-<output_root>/<model>_samples.zip
 <output_root>/<model>_separated.zip
 <output_root>/<model>_samples_separated.zip
 ```
@@ -196,7 +195,9 @@ for metrics regardless.
 The consolidated model directory remains the authoritative full-run result.
 Samples are kept in their own consolidated directory, and both numerical
 results and samples also receive independent input-shaped separated trees.
-All four directories are archived automatically after a successful run. The
+The numerical directories and separated sample directory are archived
+automatically after a successful run. The redundant consolidated-sample ZIP
+is intentionally not created because it contains the same sample files. The
 disposable `extracted_attacks` input cache is excluded from the result ZIP.
 
 ### Qualitative samples

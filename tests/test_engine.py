@@ -115,7 +115,8 @@ def test_end_to_end_fixed_cohort(tmp_path):
         )
     )
     for archive in (
-        "test_adapter.zip", "test_adapter_samples.zip",
-        "test_adapter_separated.zip", "test_adapter_samples_separated.zip",
+        "test_adapter.zip", "test_adapter_separated.zip",
+        "test_adapter_samples_separated.zip",
     ):
         assert (results_root / archive).is_file()
+    assert not (results_root / "test_adapter_samples.zip").exists()
