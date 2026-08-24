@@ -94,9 +94,9 @@ def test_end_to_end_fixed_cohort(tmp_path):
         / "frozen_prompt" / "steps500_eps2" / "datasets"
         / "mvtec_to_mvtec" / "per_dataset"
     )
-    manifests = list(
-        (separated_samples / "fixed_0_5").glob("*/selection_manifest.json")
-    )
+    manifests = list((separated_samples / "fixed_0_5").glob(
+        "normal_to_abnormal__ce_focal_dice__global/selection_manifest.json"
+    ))
     assert len(manifests) == 1
     sample_folders = [path for path in manifests[0].parent.iterdir() if path.is_dir()]
     assert len(sample_folders) == 1

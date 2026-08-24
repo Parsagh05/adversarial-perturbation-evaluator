@@ -42,6 +42,17 @@ def model_sibling_root(
     return Path(output_root).expanduser().resolve() / f"{safe_component(model)}{suffix}"
 
 
+def compact_sample_condition_id(record: dict[str, Any]) -> str:
+    """Name a condition using only context absent from the structured parents."""
+    category = str(record.get("category") or "").strip()
+    parts = [] if not category or category == "all" else [category]
+    parts.extend(
+        str(record.get(field) or "")
+        for field in ("direction", "loss_formulation", "loss_mode")
+    )
+    return "__".join(safe_component(part) for part in parts)
+
+
 def slice_root(root: Path, record: dict[str, Any]) -> Path:
     dataset_pair = (
         f"{safe_component(record['source_dataset'])}_to_"

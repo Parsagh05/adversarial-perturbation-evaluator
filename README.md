@@ -178,7 +178,7 @@ reported as a complete benchmark.
 
 <output_root>/<model>_samples_separated/
   setups/<prompt_mode>/<setup_id>/datasets/<source>_to_<target>/<scope>/
-    <threshold_mode>/<condition_id>/<selection>__<protocol_id>/...
+    <threshold_mode>/<compact_condition>/<selection>__<protocol_id>/...
 
 <output_root>/<model>.zip
 <output_root>/<model>_separated.zip
@@ -199,6 +199,12 @@ The numerical directories and separated sample directory are archived
 automatically after a successful run. The redundant consolidated-sample ZIP
 is intentionally not created because it contains the same sample files. The
 disposable `extracted_attacks` input cache is excluded from the result ZIP.
+
+Structured per-dataset sample conditions use the compact name
+`<direction>__<loss_formulation>__<loss_mode>` because prompt, setup, dataset
+pair, scope, and threshold are already present in parent directories.
+Per-category and per-image conditions prefix the category to prevent naming
+collisions. Flat consolidated sample exports retain the full condition ID.
 
 ### Qualitative samples
 

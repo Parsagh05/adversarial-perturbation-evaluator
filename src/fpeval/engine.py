@@ -33,6 +33,7 @@ from .metrics import (
 )
 from .qualitative import export_samples
 from .structured import (
+    compact_sample_condition_id,
     model_sibling_root,
     separated_root,
     slice_root,
@@ -598,7 +599,7 @@ def evaluate(config: EvaluationConfig) -> Path:
                             and int(row["attacked"])
                         ]
                         sample_arguments = dict(
-                            condition_id=attack.condition_id, rows=selected_rows,
+                            rows=selected_rows,
                             samples_by_id=indexed,
                             sample_ids=predictions["sample_ids"].tolist(),
                             clean_maps=predictions["clean_maps"],
@@ -608,10 +609,14 @@ def evaluate(config: EvaluationConfig) -> Path:
                             gaussian_sigma=config.gaussian_sigma,
                         )
                         export_samples(
-                            samples_output / threshold_mode, **sample_arguments
+                            samples_output / threshold_mode,
+                            condition_id=attack.condition_id,
+                            **sample_arguments,
                         )
                         export_samples(
-                            separated_sample_slice / threshold_mode, **sample_arguments
+                            separated_sample_slice / threshold_mode,
+                            condition_id=compact_sample_condition_id(attack.record),
+                            **sample_arguments,
                         )
         finally:
             adapter.close()
