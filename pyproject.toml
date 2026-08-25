@@ -26,6 +26,22 @@ anomalyclip = [
   "timm==0.6.13",
   "torchvision>=0.15",
 ]
+adaclip = [
+  # The official repository imports these from method/, tools/ and loss.py.
+  "ftfy>=6.0",
+  "huggingface-hub>=0.20",
+  "matplotlib>=3.6",
+  "opencv-python>=4.8",
+  "pandas>=1.5",
+  "regex>=2023.0",
+  "scikit-image>=0.20",
+  "scikit-learn>=1.2",
+  "scipy>=1.10",
+  "seaborn>=0.12",
+  "timm>=0.9",
+  "torchvision>=0.15",
+  "transformers>=4.30",
+]
 aaclip = [
   "einops==0.7.0",
   "ftfy==6.2.0",

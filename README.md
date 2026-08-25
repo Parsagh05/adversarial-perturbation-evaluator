@@ -5,7 +5,7 @@ the perturbation datasets produced by the object-agnostic prompt experiments.
 It does not generate or optimize attacks. The perturbation manifest and the
 fixed `evaluation_test_indices.csv` are always authoritative.
 
-The first target adapters are AnomalyCLIP and AA-CLIP. The shared evaluator owns attack
+The first target adapters are AnomalyCLIP, AA-CLIP, and AdaCLIP. The shared evaluator owns attack
 discovery, fixed-cohort validation, RGB construction, metrics, thresholds, and
 result files; model-specific loading, preprocessing, prompting, and inference
 stay behind a small adapter interface.
@@ -101,6 +101,24 @@ aggregation is fitted on clean predictions and frozen before adversarial
 evaluation. For zero-shot evaluation, the MVTec target uses `TrainOnVisA`
 weights and the VisA target uses `TrainOnMVTec` weights.
 
+AdaCLIP uses the official `ViT-L-14-336` OpenAI backbone, 518-pixel inputs,
+seed 111, prompting depth/length 4/5, prompting type `SD`, prompting branch
+`VL`, HSF aggregation with 20 clusters, and the feature hierarchy derived from
+the model config as `layers//4 * {1,2,3,4}`. Its released weights are published
+on the authors' HuggingFace Space (the README links Google Drive, which cannot
+be fetched unattended), so the adapter downloads and checksum-verifies them on
+first use and caches them afterwards. Evaluation is zero-shot exactly as in the
+official `test.sh`: the MVTec target uses the `visa_clinicdb` weights and the
+VisA target uses the `mvtec_colondb` weights. AdaCLIP returns full-resolution
+maps and its official evaluation applies `gaussian_filter(sigma=4)` to them, so
+the shared evaluator keeps `gaussian_sigma=4.0`.
+
+AdaCLIP requires CUDA: its prompt layers cast the learned context with `.half()`
+and the official evaluation runs under `torch.cuda.amp.autocast`. Its official
+`test.py` refuses any batch size above one because the text-prompt layer is not
+batch-safe, so the adapter forwards a single image at a time whatever
+`batch_size` is set to.
+
 Batch size is an execution-only setting and may be reduced for Kaggle without
 changing model outputs.
 
@@ -117,7 +135,11 @@ The AnomalyCLIP extra includes `thop`, which the official repository imports
 while loading its model implementation.
 
 For AA-CLIP, install with `python -m pip install -e ".[aaclip]"`, start from
-`configs/aaclip.example.json`, and run the same command. These extras install
+`configs/aaclip.example.json`, and run the same command. For AdaCLIP, install with
+`python -m pip install -e ".[adaclip]"` and start from
+`configs/adaclip.example.json`; its `checkpoint` accepts either a local path or
+one of the released names `visa_clinicdb`, `mvtec_colondb`, or `all`, and a
+name is downloaded into `download_root` and verified against a pinned sha256. These extras install
 model runtime libraries without replacing the environment's PyTorch with an
 old repository pin. The AA-CLIP extra also includes `ipdb` and `regex`, which
 the official repository imports from `model/`, `forward_utils.py`, and its
@@ -127,8 +149,9 @@ For local/server runs, each adapter expects an existing checkout of its official
 repository and released checkpoints. Target-specific paths are configured under
 `model_kwargs_by_target`.
 
-For Kaggle, use `notebooks/kaggle_anomalyclip.ipynb` or
-`notebooks/kaggle_aaclip.ipynb`, enable GPU and Internet, and attach only:
+For Kaggle, use `notebooks/kaggle_anomalyclip.ipynb`,
+`notebooks/kaggle_aaclip.ipynb`, or `notebooks/kaggle_adaclip.ipynb`, enable
+GPU and Internet, and attach only:
 
 - MVTec AD;
 - VisA;
@@ -140,7 +163,8 @@ so Kaggle slug/capitalization differences such as
 `MVTec-AD/mvtec_anomaly_detection`, `VisA-AD/VisA_20220922`, and
 `perturbation-generated/setups` do not require path edits. The AA-CLIP notebook
 also downloads its public adapter-checkpoint dataset when it is not attached and
-downloads/checksum-verifies the exact OpenAI ViT-L/14@336px base model.
+downloads/checksum-verifies the exact OpenAI ViT-L/14@336px base model. The
+AdaCLIP notebook downloads and checksum-verifies the released AdaCLIP weights.
 
 The first notebook cell sets `MVTEC_INPUT`, `VISA_INPUT`, and
 `PERTURBATION_INPUT`, then selects prompt modes, normalized setup IDs, scopes,
