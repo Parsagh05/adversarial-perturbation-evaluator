@@ -6,7 +6,7 @@ import zipfile
 import pytest
 import torch
 
-from fpeval.attacks import discover_attacks, materialize_input
+from fpeval.attacks import _metadata, discover_attacks, materialize_input
 
 
 def _write_bundle(root: Path) -> Path:
@@ -88,3 +88,40 @@ def test_duplicate_condition_without_manifest_checksum_is_deduplicated(tmp_path)
     bundles = materialize_input(tmp_path, tmp_path / "cache")
     attacks = discover_attacks(bundles, scopes=("per_dataset",), targets=("mvtec",))
     assert len(attacks) == 1
+
+
+def test_cross_dataset_scope_uses_the_whole_target_cohort(tmp_path):
+    bundle = _write_bundle(tmp_path)
+    manifest = bundle / "attack_manifest.csv"
+    rows = list(csv.DictReader(manifest.open(newline="")))
+    fields = list(rows[0])
+    rows[0]["scope"] = "cross_dataset"
+    with manifest.open("w", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fields)
+        writer.writeheader()
+        writer.writerows(rows)
+    attacks = discover_attacks([bundle], scopes=("cross_dataset",), targets=("mvtec",))
+    assert len(attacks) == 1
+    attack = attacks[0]
+    assert attack.record["scope"] == "cross_dataset"
+    # A dataset-level scope must not be filtered down to one category.
+    assert len(attack.evaluation_ids) == 2
+    assert attack.record["tensor_key"] == "delta"
+
+
+def test_gradnorm_setup_id_is_preserved_and_learnable_suffix_is_stripped(tmp_path):
+    # _metadata reads only the path, so the bundle does not need to exist.
+    for prompt_dir, directory, expected_mode, expected_id in (
+        ("frozen_prompt", "steps500_eps2_gradnorm",
+         "frozen_prompt", "steps500_eps2_gradnorm"),
+        ("frozen_prompt", "steps800_eps4_margin_topk_gradnorm",
+         "frozen_prompt", "steps800_eps4_margin_topk_gradnorm"),
+        ("learnable_prompt", "steps500_eps2_gradnorm_learnable_prompt",
+         "learnable_prompt", "steps500_eps2_gradnorm"),
+        ("learnable_prompt", "steps800_eps4_margin_topk_gradnorm_learnable_prompt",
+         "learnable_prompt", "steps800_eps4_margin_topk_gradnorm"),
+        ("frozen_prompt", "steps500_eps2", "frozen_prompt", "steps500_eps2"),
+    ):
+        bundle = (tmp_path / "setups" / prompt_dir / directory
+                  / "canonical_clip_cross_dataset")
+        assert _metadata(bundle) == (expected_mode, expected_id)

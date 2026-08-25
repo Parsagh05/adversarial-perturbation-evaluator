@@ -16,11 +16,18 @@ import torch
 
 SCOPE_NAMES = {
     "dataset": "per_dataset", "per_dataset": "per_dataset",
+    "cross_dataset": "cross_dataset",
     "category": "per_category", "per_category": "per_category",
     "image": "per_image", "per_image": "per_image",
 }
+# Scopes whose perturbation covers a whole dataset rather than one category.
+# The generator delivers the same delta under both, split only by whether the
+# evaluation dataset is the source dataset.
+DATASET_LEVEL_SCOPES = frozenset({"per_dataset", "cross_dataset"})
 DIRECTION_LABELS = {"normal_to_abnormal": (0, 1), "abnormal_to_normal": (1, 0)}
-SETUP_PATTERN = re.compile(r"steps\d+_eps\d+(?:_margin_topk)?(?:_learnable_prompt)?", re.I)
+SETUP_PATTERN = re.compile(
+    r"steps\d+_eps\d+(?:_margin_topk)?(?:_gradnorm)?(?:_learnable_prompt)?", re.I
+)
 
 
 def file_sha256(path: Path) -> str:
@@ -241,7 +248,7 @@ def discover_attacks(
             cohort = [
                 row for row in protocol
                 if row["dataset"] == target and row["partition"] == "evaluation"
-                and (scope == "per_dataset" or row["category"] == category)
+                and (scope in DATASET_LEVEL_SCOPES or row["category"] == category)
             ]
             if not cohort:
                 raise ValueError(f"No evaluation cohort for {target}/{category or 'all'}")

@@ -16,7 +16,9 @@ class EvaluationConfig:
     mvtec_root: str | None = None
     visa_root: str | None = None
     targets: tuple[str, ...] = ("mvtec", "visa")
-    scopes: tuple[str, ...] = ("per_dataset", "per_category", "per_image")
+    scopes: tuple[str, ...] = (
+        "per_dataset", "cross_dataset", "per_category", "per_image",
+    )
     prompt_modes: tuple[str, ...] | None = None
     setup_ids: tuple[str, ...] | None = None
     source_datasets: tuple[str, ...] | None = None
@@ -68,7 +70,7 @@ class EvaluationConfig:
                 setattr(self, name, tuple(value))
         if not self.targets or set(self.targets) - {"mvtec", "visa"}:
             raise ValueError("targets must contain mvtec and/or visa")
-        valid_scopes = {"per_dataset", "per_category", "per_image"}
+        valid_scopes = {"per_dataset", "cross_dataset", "per_category", "per_image"}
         if not self.scopes or set(self.scopes) - valid_scopes:
             raise ValueError(f"scopes must be selected from {sorted(valid_scopes)}")
         valid_thresholds = {"fixed_0_5", "image_f1", "clean_pixel_f1"}

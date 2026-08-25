@@ -20,9 +20,19 @@ supported:
 ```text
 setups/{frozen_prompt,learnable_prompt}/<setup_id>/
   canonical_clip_per_dataset/
+  canonical_clip_cross_dataset/
   canonical_clip_per_category/
   canonical_clip_per_image/
 ```
+
+`per_dataset` and `cross_dataset` carry the same universal delta and differ only
+in whether the evaluation dataset is the attack's source dataset, so both are
+dataset-level scopes evaluated over the full target cohort. Setup IDs follow
+`steps{500|800}_eps{2|4}[_margin_topk][_gradnorm][_learnable_prompt]`; the
+`_gradnorm` variants rescale each component gradient to unit L2 norm before the
+global/local weights and therefore provide the `combined` loss mode only. The
+normalized setup ID keeps `_gradnorm` and drops `_learnable_prompt`, which is
+already carried by the prompt-mode axis.
 
 and separate scope ZIPs such as
 `canonical_clip_per_dataset_<datasets>_<setup_id>.zip`. A bundle must contain:
