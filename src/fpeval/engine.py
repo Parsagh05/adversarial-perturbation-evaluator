@@ -11,6 +11,8 @@ from collections import defaultdict
 from collections.abc import Iterable, Sequence
 from typing import Any
 
+import shutil
+
 import numpy as np
 from scipy.ndimage import gaussian_filter
 import torch
@@ -258,6 +260,47 @@ def _calibrate_clean(
 def _mean(rows: list[dict[str, Any]], name: str) -> float:
     values = np.asarray([row.get(name, np.nan) for row in rows], dtype=np.float64)
     return float(np.nanmean(values)) if np.isfinite(values).any() else np.nan
+
+
+def _condition_sample_rank(summary_rows: list[dict[str, Any]]) -> float:
+    """Rank a condition by targeted image ASR, which no pixel threshold affects."""
+    finite = []
+    for row in summary_rows:
+        try:
+            value = float(row.get("targeted_attack_success_rate"))
+        except (TypeError, ValueError):
+            continue
+        if np.isfinite(value):
+            finite.append(value)
+    return max(finite) if finite else float("-inf")
+
+
+class _SampleBudget:
+    """Keep only the strongest conditions' samples, bounded per attack scope.
+
+    Sample volume grows with the number of conditions, not with the amount of
+    data behind them, so per-category and per-image scopes would otherwise
+    export thousands of near-duplicate folders. Weaker conditions are deleted
+    as soon as a stronger one arrives, so at most ``limit`` survive per scope.
+    """
+
+    def __init__(self, limit: int | None) -> None:
+        self.limit = limit
+        self._kept: dict[str, list[tuple[float, str, list[Path]]]] = {}
+
+    def register(self, scope: str, rank: float, directories: list[Path]) -> None:
+        if self.limit is None:
+            return
+        kept = self._kept.setdefault(scope, [])
+        kept.append((rank, str(directories[0]), directories))
+        kept.sort(key=lambda item: item[0], reverse=True)
+        for _, _, evicted in kept[self.limit:]:
+            for directory in evicted:
+                shutil.rmtree(directory, ignore_errors=True)
+        del kept[self.limit:]
+
+    def summary(self) -> dict[str, int]:
+        return {scope: len(kept) for scope, kept in sorted(self._kept.items())}
 
 
 def _evaluate_condition(
@@ -552,6 +595,7 @@ def evaluate(config: EvaluationConfig) -> Path:
     threshold_payload: dict[str, Any] = {"schema_version": 1, "model": config.model, "targets": {}}
     resolved_model_settings: dict[str, dict[str, object]] = {}
 
+    sample_budget = _SampleBudget(config.max_sample_conditions)
     for target in config.targets:
         target_attacks = [attack for attack in attacks if attack.record["target_dataset"] == target]
         if not target_attacks:
@@ -592,6 +636,7 @@ def evaluate(config: EvaluationConfig) -> Path:
                     separated_sample_slice = slice_root(
                         structured_samples_output, attack.record
                     )
+                    condition_sample_dirs: list[Path] = []
                     for threshold_mode in config.qualitative_threshold_modes:
                         selected_rows = [
                             row for row in images
@@ -618,11 +663,24 @@ def evaluate(config: EvaluationConfig) -> Path:
                             condition_id=compact_sample_condition_id(attack.record),
                             **sample_arguments,
                         )
+                        condition_sample_dirs.extend([
+                            samples_output / threshold_mode / attack.condition_id,
+                            separated_sample_slice / threshold_mode
+                            / compact_sample_condition_id(attack.record),
+                        ])
+                    sample_budget.register(
+                        str(attack.record["scope"]),
+                        _condition_sample_rank(summary),
+                        condition_sample_dirs,
+                    )
         finally:
             adapter.close()
 
     if not all_summary:
         raise ValueError("No selected conditions had a configured target")
+    kept = sample_budget.summary()
+    if kept:
+        print("Qualitative samples kept per scope:", kept)
     _write_csv(output / "summary.csv", all_summary)
     _write_csv(output / "category_metrics.csv", all_categories)
     _write_csv(output / "per_image.csv", all_images)

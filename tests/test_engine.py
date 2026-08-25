@@ -120,3 +120,53 @@ def test_end_to_end_fixed_cohort(tmp_path):
     ):
         assert (results_root / archive).is_file()
     assert not (results_root / "test_adapter_samples.zip").exists()
+
+
+def test_max_sample_conditions_keeps_only_the_strongest_per_scope(tmp_path):
+    from fpeval.engine import _SampleBudget
+
+    budget = _SampleBudget(2)
+    made: dict[str, Path] = {}
+    for name, rank in (("weak", 5.0), ("best", 90.0), ("mid", 40.0), ("worst", 1.0)):
+        for scope in ("per_dataset", "per_category"):
+            folder = tmp_path / scope / name
+            (folder / "sample").mkdir(parents=True)
+            (folder / "sample" / "metrics.json").write_text("{}", encoding="utf-8")
+            made[f"{scope}/{name}"] = folder
+        budget.register(
+            "per_dataset", rank, [tmp_path / "per_dataset" / name]
+        )
+        budget.register(
+            "per_category", rank, [tmp_path / "per_category" / name]
+        )
+
+    # Each scope is bounded independently and keeps its two strongest.
+    assert budget.summary() == {"per_category": 2, "per_dataset": 2}
+    for scope in ("per_dataset", "per_category"):
+        assert made[f"{scope}/best"].is_dir()
+        assert made[f"{scope}/mid"].is_dir()
+        assert not made[f"{scope}/weak"].exists()
+        assert not made[f"{scope}/worst"].exists()
+
+
+def test_sample_budget_is_inactive_without_a_limit(tmp_path):
+    from fpeval.engine import _SampleBudget
+
+    budget = _SampleBudget(None)
+    folder = tmp_path / "kept"
+    folder.mkdir()
+    budget.register("per_image", 0.0, [folder])
+    assert folder.is_dir()
+    assert budget.summary() == {}
+
+
+def test_condition_rank_ignores_blank_and_non_finite_rates():
+    from fpeval.engine import _condition_sample_rank
+
+    assert _condition_sample_rank([{"targeted_attack_success_rate": 12.5}]) == 12.5
+    assert _condition_sample_rank(
+        [{"targeted_attack_success_rate": ""},
+         {"targeted_attack_success_rate": 30.0},
+         {"targeted_attack_success_rate": float("nan")}]
+    ) == 30.0
+    assert _condition_sample_rank([{}]) == float("-inf")

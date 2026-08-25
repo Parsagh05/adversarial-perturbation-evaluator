@@ -5,7 +5,7 @@
   "mvtec_root": "/kaggle/input/mvtec-ad/mvtec_anomaly_detection",
   "visa_root": "/kaggle/input/visa/VisA_20220922",
   "targets": ["mvtec", "visa"],
-  "scopes": ["per_dataset", "per_category", "per_image"],
+  "scopes": ["per_dataset", "cross_dataset", "per_category", "per_image"],
   "prompt_modes": ["frozen_prompt", "learnable_prompt"],
   "setup_ids": null,
   "source_datasets": null,
@@ -37,6 +37,8 @@
   "verify_checksums": true,
   "save_predictions": false,
   "overwrite": false,
+  "max_sample_conditions": 25,
+  "qualitative_threshold_modes": ["clean_pixel_f1"],
   "run_metadata": {
     "environment": "kaggle",
     "checkpoint_protocol": "MVTec target uses TrainOnVisA; VisA target uses TrainOnMVTec"

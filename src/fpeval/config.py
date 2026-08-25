@@ -43,6 +43,7 @@ class EvaluationConfig:
     extraction_cache: str | None = None
     save_predictions: bool = False
     save_qualitative_samples: bool = True
+    max_sample_conditions: int | None = None
     qualitative_threshold_modes: tuple[str, ...] | None = None
     samples_output_root: str | None = None
     write_separated_results: bool = True
@@ -92,6 +93,8 @@ class EvaluationConfig:
             raise ValueError("location_free_topk_fraction must be in (0,1]")
         if self.max_conditions is not None and self.max_conditions < 1:
             raise ValueError("max_conditions must be positive")
+        if self.max_sample_conditions is not None and self.max_sample_conditions < 1:
+            raise ValueError("max_sample_conditions must be positive")
         if not Path(self.attacks_root).expanduser().exists():
             raise FileNotFoundError(f"attacks_root does not exist: {self.attacks_root}")
         if "mvtec" in self.targets and not self.mvtec_root:

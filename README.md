@@ -321,7 +321,13 @@ full per-image row plus a machine-readable `selection_reasons` list;
 - PSNR: 30.54 dB
 ```
 
-Set
+Sample volume grows with the number of conditions, not with the amount of data
+behind them, so the `per_category` and `per_image` scopes would otherwise export
+thousands of near-duplicate folders over the same images. `max_sample_conditions`
+caps how many conditions keep samples, applied **per scope** and ranked by
+targeted attack success rate, which no pixel threshold affects. Weaker
+conditions are deleted as soon as a stronger one arrives, so at most that many
+survive per scope and peak disk use stays bounded. Set
 `save_qualitative_samples: false`, `write_separated_results: false`, or
 `create_output_archives: false` to turn off an export. Custom destinations are
 available through `samples_output_root`, `separated_output_root`, and
