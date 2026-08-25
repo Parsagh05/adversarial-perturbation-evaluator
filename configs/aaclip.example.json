@@ -38,7 +38,7 @@
   "save_predictions": false,
   "overwrite": false,
   "max_sample_conditions": 25,
-  "qualitative_threshold_modes": ["image_f1"],
+  "qualitative_threshold_modes": ["clean_pixel_f1"],
   "run_metadata": {
     "environment": "kaggle",
     "checkpoint_protocol": "MVTec target uses TrainOnVisA; VisA target uses TrainOnMVTec"

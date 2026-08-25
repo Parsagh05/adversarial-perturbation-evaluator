@@ -25,5 +25,5 @@
   "image_size": 518,
   "gaussian_sigma": 4.0,
   "max_sample_conditions": 25,
-  "qualitative_threshold_modes": ["image_f1"]
+  "qualitative_threshold_modes": ["clean_pixel_f1"]
 }
