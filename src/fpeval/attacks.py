@@ -26,7 +26,7 @@ SCOPE_NAMES = {
 DATASET_LEVEL_SCOPES = frozenset({"per_dataset", "cross_dataset"})
 DIRECTION_LABELS = {"normal_to_abnormal": (0, 1), "abnormal_to_normal": (1, 0)}
 SETUP_PATTERN = re.compile(
-    r"steps\d+_eps\d+(?:_margin_topk)?(?:_gradnorm)?(?:_learnable_prompt)?", re.I
+    r"steps\d+_eps\d+(?:_margin_topk)?(?:_learnable_prompt)?", re.I
 )
 
 

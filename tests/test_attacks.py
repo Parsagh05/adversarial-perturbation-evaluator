@@ -109,19 +109,23 @@ def test_cross_dataset_scope_uses_the_whole_target_cohort(tmp_path):
     assert attack.record["tensor_key"] == "delta"
 
 
-def test_gradnorm_setup_id_is_preserved_and_learnable_suffix_is_stripped(tmp_path):
-    # _metadata reads only the path, so the bundle does not need to exist.
-    for prompt_dir, directory, expected_mode, expected_id in (
-        ("frozen_prompt", "steps500_eps2_gradnorm",
-         "frozen_prompt", "steps500_eps2_gradnorm"),
-        ("frozen_prompt", "steps800_eps4_margin_topk_gradnorm",
-         "frozen_prompt", "steps800_eps4_margin_topk_gradnorm"),
-        ("learnable_prompt", "steps500_eps2_gradnorm_learnable_prompt",
-         "learnable_prompt", "steps500_eps2_gradnorm"),
-        ("learnable_prompt", "steps800_eps4_margin_topk_gradnorm_learnable_prompt",
-         "learnable_prompt", "steps800_eps4_margin_topk_gradnorm"),
-        ("frozen_prompt", "steps500_eps2", "frozen_prompt", "steps500_eps2"),
-    ):
+def test_setup_id_normalization_covers_the_generator_grammar(tmp_path):
+    # steps{500|800}_eps{2|4}[_margin_topk][_learnable_prompt]; _metadata reads
+    # only the path, so the bundle does not need to exist.
+    cases = []
+    for steps in (500, 800):
+        for eps in (2, 4):
+            for margin in ("", "_margin_topk"):
+                base = f"steps{steps}_eps{eps}{margin}"
+                cases.append(("frozen_prompt", base, "frozen_prompt", base))
+                cases.append(("learnable_prompt", f"{base}_learnable_prompt",
+                              "learnable_prompt", base))
+    assert len(cases) == 16
+    seen = set()
+    for prompt_dir, directory, expected_mode, expected_id in cases:
         bundle = (tmp_path / "setups" / prompt_dir / directory
                   / "canonical_clip_cross_dataset")
         assert _metadata(bundle) == (expected_mode, expected_id)
+        seen.add((expected_mode, expected_id))
+    # Every catalog setup must map to its own slot.
+    assert len(seen) == 16

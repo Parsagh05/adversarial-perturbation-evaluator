@@ -8,8 +8,7 @@ import re
 
 
 SETUP_PATTERN = re.compile(
-    r"steps\d+_eps\d+(?:_margin_topk)?(?:_gradnorm)?(?:_learnable_prompt)?",
-    re.IGNORECASE,
+    r"steps\d+_eps\d+(?:_margin_topk)?(?:_learnable_prompt)?", re.IGNORECASE
 )
 
 
