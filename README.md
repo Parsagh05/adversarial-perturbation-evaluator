@@ -200,9 +200,6 @@ reported as a complete benchmark.
   predictions/                 # only when save_predictions=true
   extracted_attacks/           # ZIP cache; ignored by numerical outputs
 
-<output_root>/<model>_samples/
-  <threshold_mode>/<condition_id>/<selection>__<protocol_id>/...
-
 <output_root>/<model>_separated/
   setups/
     <frozen_prompt|learnable_prompt>/
@@ -332,7 +329,7 @@ conditions are deleted as soon as a stronger one arrives, so at most that many
 survive per scope and peak disk use stays bounded. Set
 `save_qualitative_samples: false`, `write_separated_results: false`, or
 `create_output_archives: false` to turn off an export. Custom destinations are
-available through `samples_output_root`, `separated_output_root`, and
+available through `separated_output_root` and
 `separated_samples_output_root`.
 
 ## Adding another target model

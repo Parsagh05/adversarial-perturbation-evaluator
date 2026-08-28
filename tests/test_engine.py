@@ -109,16 +109,14 @@ def test_end_to_end_fixed_cohort(tmp_path):
         "heatmap_difference.png", "metrics.json", "description.md",
     ):
         assert (sample_folders[0] / filename).is_file()
-    assert list(
-        (results_root / "test_adapter_samples" / "fixed_0_5").glob(
-            "*/selection_manifest.json"
-        )
-    )
     for archive in (
         "test_adapter.zip", "test_adapter_separated.zip",
         "test_adapter_samples_separated.zip",
     ):
         assert (results_root / archive).is_file()
+    # Samples are delivered only in the input-shaped separated tree; the old
+    # consolidated copy held the same folders and was never archived.
+    assert not (results_root / "test_adapter_samples").exists()
     assert not (results_root / "test_adapter_samples.zip").exists()
 
 

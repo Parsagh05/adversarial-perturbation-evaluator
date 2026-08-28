@@ -45,7 +45,6 @@ class EvaluationConfig:
     save_qualitative_samples: bool = True
     max_sample_conditions: int | None = None
     qualitative_threshold_modes: tuple[str, ...] | None = None
-    samples_output_root: str | None = None
     write_separated_results: bool = True
     separated_output_root: str | None = None
     separated_samples_output_root: str | None = None

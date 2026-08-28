@@ -566,9 +566,6 @@ def evaluate(config: EvaluationConfig) -> Path:
     structured_output = separated_root(
         config.output_root, config.model, config.separated_output_root
     )
-    samples_output = model_sibling_root(
-        config.output_root, config.model, "_samples", config.samples_output_root
-    )
     structured_samples_output = model_sibling_root(
         config.output_root,
         config.model,
@@ -655,20 +652,14 @@ def evaluate(config: EvaluationConfig) -> Path:
                             gaussian_sigma=config.gaussian_sigma,
                         )
                         export_samples(
-                            samples_output / threshold_mode,
-                            condition_id=attack.condition_id,
-                            **sample_arguments,
-                        )
-                        export_samples(
                             separated_sample_slice / threshold_mode,
                             condition_id=compact_sample_condition_id(attack.record),
                             **sample_arguments,
                         )
-                        condition_sample_dirs.extend([
-                            samples_output / threshold_mode / attack.condition_id,
+                        condition_sample_dirs.append(
                             separated_sample_slice / threshold_mode
-                            / compact_sample_condition_id(attack.record),
-                        ])
+                            / compact_sample_condition_id(attack.record)
+                        )
                     sample_budget.register(
                         str(attack.record["scope"]),
                         _condition_sample_rank(summary),
