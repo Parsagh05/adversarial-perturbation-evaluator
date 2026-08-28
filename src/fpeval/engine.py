@@ -220,6 +220,7 @@ def _condition_fields(attack: Attack) -> dict[str, Any]:
         "prompt_mode", "setup_id", "source_dataset", "target_dataset", "scope",
         "category", "direction", "source_label", "target_label", "loss_formulation",
         "loss_mode", "epsilon", "image_size", "optimization_steps",
+        "attack_train_fraction",
         "margin_topk_fraction", "prompt_provenance", "normal_local_target",
         "normal_target_region_fraction", "normal_target_center_x",
         "normal_target_center_y",

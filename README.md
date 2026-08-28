@@ -28,8 +28,13 @@ setups/{frozen_prompt,learnable_prompt}/<setup_id>/
 `per_dataset` and `cross_dataset` carry the same universal delta and differ only
 in whether the evaluation dataset is the attack's source dataset, so both are
 dataset-level scopes evaluated over the full target cohort. Setup IDs follow
-`steps{500|800}_eps{2|4}[_margin_topk][_learnable_prompt]`. The normalized setup
-ID drops `_learnable_prompt`, which is already carried by the prompt-mode axis.
+`steps{N}_eps{E}[_margin_topk][_train{P}][_learnable_prompt]`, mirroring the
+generator's `compose_setup_id`. The step and epsilon grids are swept, so neither
+is a fixed set, and a decimal point becomes `p` (`eps0p02`, `train12p5`). The
+`_train{P}` component appears only when the attack-train fraction is below 1.0,
+and it is preserved: a 20% run and a full run are different setups. The
+normalized setup ID drops only `_learnable_prompt`, which is already carried by
+the prompt-mode axis. `attack_train_fraction` is also kept as a result column.
 
 and separate scope ZIPs such as
 `canonical_clip_per_dataset_<datasets>_<setup_id>.zip`. A bundle must contain:

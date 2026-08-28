@@ -110,22 +110,46 @@ def test_cross_dataset_scope_uses_the_whole_target_cohort(tmp_path):
 
 
 def test_setup_id_normalization_covers_the_generator_grammar(tmp_path):
-    # steps{500|800}_eps{2|4}[_margin_topk][_learnable_prompt]; _metadata reads
-    # only the path, so the bundle does not need to exist.
-    cases = []
-    for steps in (500, 800):
-        for eps in (2, 4):
-            for margin in ("", "_margin_topk"):
-                base = f"steps{steps}_eps{eps}{margin}"
-                cases.append(("frozen_prompt", base, "frozen_prompt", base))
-                cases.append(("learnable_prompt", f"{base}_learnable_prompt",
-                              "learnable_prompt", base))
-    assert len(cases) == 16
+    """Mirror setup_catalog.compose_setup_id.
+
+    steps{N}_eps{E}[_margin_topk][_train{P}][_learnable_prompt], where the step
+    and epsilon grids are swept and a decimal point becomes "p". _metadata reads
+    only the path, so the bundle does not need to exist.
+    """
+    cases = [
+        # (directory, expected prompt_mode, expected normalized setup_id)
+        ("steps500_eps2", "frozen_prompt", "steps500_eps2"),
+        ("steps800_eps4_margin_topk", "frozen_prompt", "steps800_eps4_margin_topk"),
+        ("steps500_eps2_learnable_prompt", "learnable_prompt", "steps500_eps2"),
+        ("steps800_eps4_margin_topk_learnable_prompt",
+         "learnable_prompt", "steps800_eps4_margin_topk"),
+        # swept grids: any step count, any epsilon
+        ("steps1200_eps8", "frozen_prompt", "steps1200_eps8"),
+        ("steps250_eps0p02", "frozen_prompt", "steps250_eps0p02"),
+        # a partial attack-train fraction is its own setup, never folded away
+        ("steps100_eps4_train20", "frozen_prompt", "steps100_eps4_train20"),
+        ("steps100_eps4_margin_topk_train20",
+         "frozen_prompt", "steps100_eps4_margin_topk_train20"),
+        ("steps250_eps0p02_margin_topk_train12p5_learnable_prompt",
+         "learnable_prompt", "steps250_eps0p02_margin_topk_train12p5"),
+    ]
     seen = set()
-    for prompt_dir, directory, expected_mode, expected_id in cases:
+    for directory, expected_mode, expected_id in cases:
+        prompt_dir = ("learnable_prompt" if directory.endswith("_learnable_prompt")
+                      else "frozen_prompt")
         bundle = (tmp_path / "setups" / prompt_dir / directory
                   / "canonical_clip_cross_dataset")
-        assert _metadata(bundle) == (expected_mode, expected_id)
+        assert _metadata(bundle) == (expected_mode, expected_id), directory
         seen.add((expected_mode, expected_id))
-    # Every catalog setup must map to its own slot.
-    assert len(seen) == 16
+    assert len(seen) == len(cases)
+
+
+def test_a_partial_train_fraction_never_collapses_onto_the_full_run(tmp_path):
+    # Folding _train20 away would silently pool a 20% run with a 100% run.
+    def norm(directory):
+        return _metadata(tmp_path / "setups" / "frozen_prompt" / directory / "bundle")
+
+    full = norm("steps100_eps4_margin_topk")
+    partial = norm("steps100_eps4_margin_topk_train20")
+    assert full != partial
+    assert partial[1].endswith("_train20")
