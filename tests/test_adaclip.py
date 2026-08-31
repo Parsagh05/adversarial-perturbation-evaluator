@@ -1,11 +1,13 @@
 import hashlib
 
+import numpy as np
 import pytest
 
 from fpeval.adapters import adapter_names, create_adapter
 from fpeval.adapters.adaclip import (
     CHECKPOINTS,
     ZERO_SHOT_CHECKPOINT,
+    _set_hsf_random_state,
     resolve_checkpoint,
 )
 
@@ -27,6 +29,34 @@ def test_released_checkpoints_carry_pinned_digests():
     for filename, digest in CHECKPOINTS.values():
         assert filename.endswith(".pth")
         assert len(digest) == 64 and int(digest, 16) >= 0
+
+
+def test_hsf_kmeans_random_state_is_pinned_without_global_rng_changes():
+    class KMeansStub:
+        random_state = None
+
+    class HSFStub:
+        cluster_performer = KMeansStub()
+
+    class ClipStub:
+        HSF = HSFStub()
+
+    class TrainerStub:
+        clip_model = ClipStub()
+
+    before = np.random.get_state()
+    _set_hsf_random_state(TrainerStub(), 111)
+    after = np.random.get_state()
+
+    assert HSFStub.cluster_performer.random_state == 111
+    assert before[0] == after[0]
+    assert (before[1] == after[1]).all()
+    assert before[2:] == after[2:]
+
+
+def test_hsf_random_state_requires_the_official_module_shape():
+    with pytest.raises(AttributeError, match="cluster_performer.random_state"):
+        _set_hsf_random_state(object(), 111)
 
 
 def test_resolve_checkpoint_accepts_an_existing_path(tmp_path):

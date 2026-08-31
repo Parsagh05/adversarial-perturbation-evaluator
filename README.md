@@ -115,6 +115,13 @@ VisA target uses the `mvtec_colondb` weights. AdaCLIP returns full-resolution
 maps and its official evaluation applies `gaussian_filter(sigma=4)` to them, so
 the shared evaluator keeps `gaussian_sigma=4.0`.
 
+The official HSF module constructs scikit-learn `KMeans` without a
+`random_state`. The adapter pins that existing instance to `hsf_seed` (default:
+the model `seed`, therefore 111) so image scores do not depend on evaluation
+order or prior NumPy RNG use. This changes only KMeans initialization
+reproducibility; HSF, its 20 clusters, and the official 0.2 score-fusion weight
+remain unchanged.
+
 AdaCLIP requires CUDA: its prompt layers cast the learned context with `.half()`
 and the official evaluation runs under `torch.cuda.amp.autocast`. Its official
 `test.py` refuses any batch size above one because the text-prompt layer is not

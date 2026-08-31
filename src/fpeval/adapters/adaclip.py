@@ -42,6 +42,22 @@ CHECKPOINTS = {
 ZERO_SHOT_CHECKPOINT = {"mvtec": "visa_clinicdb", "visa": "mvtec_colondb"}
 
 
+def _set_hsf_random_state(model: object, seed: int) -> None:
+    """Pin the official HSF KMeans instance without modifying AdaCLIP."""
+
+    clip_model = getattr(model, "clip_model", None)
+    hsf = getattr(clip_model, "HSF", None)
+    cluster_performer = getattr(hsf, "cluster_performer", None)
+    if cluster_performer is None or not hasattr(cluster_performer, "random_state"):
+        raise AttributeError(
+            "Official AdaCLIP HSF does not expose HSF.cluster_performer.random_state"
+        )
+    # The official repository constructs sklearn KMeans with random_state=None.
+    # Assigning an integer makes every fit deterministic and independent of the
+    # NumPy RNG state left by earlier images or evaluation stages.
+    cluster_performer.random_state = int(seed)
+
+
 def _import_official_repository(repository: str | Path):
     root = Path(repository).expanduser().resolve()
     required = (
@@ -148,6 +164,7 @@ class AdaCLIPAdapter(ModelAdapter):
         prompting_branch: str = "VL",
         use_hsf: bool = True,
         k_clusters: int = 20,
+        hsf_seed: int | None = None,
     ) -> None:
         target_key = target_dataset.strip().lower()
         if target_key not in ZERO_SHOT_CHECKPOINT:
@@ -165,6 +182,9 @@ class AdaCLIPAdapter(ModelAdapter):
                 "and the official evaluation runs under torch.cuda.amp.autocast"
             )
         self.image_size = int(image_size)
+        resolved_hsf_seed = int(seed if hsf_seed is None else hsf_seed)
+        if not 0 <= resolved_hsf_seed < 2**32:
+            raise ValueError("AdaCLIP hsf_seed must be between 0 and 2**32 - 1")
         method_module, tools_module = _import_official_repository(repository)
         tools_module.setup_seed(int(seed))
 
@@ -194,6 +214,7 @@ class AdaCLIPAdapter(ModelAdapter):
             "prompting_branch": prompting_branch,
             "use_hsf": bool(use_hsf),
             "k_clusters": int(k_clusters),
+            "hsf_kmeans_random_state": resolved_hsf_seed if use_hsf else None,
             "checkpoint": checkpoint_path.name,
             "checkpoint_selection": selected,
             "batch_size_note": "official test.py supports batch size 1 only",
@@ -215,6 +236,8 @@ class AdaCLIPAdapter(ModelAdapter):
             use_hsf=bool(use_hsf),
             k_clusters=int(k_clusters),
         ).to(self.device)
+        if use_hsf:
+            _set_hsf_random_state(model, resolved_hsf_seed)
         # The official ``load`` is strict=False, so a renamed module would leave
         # the prompters at their random initialization without any error. Every
         # checkpoint tensor must be consumed; only frozen CLIP weights may be

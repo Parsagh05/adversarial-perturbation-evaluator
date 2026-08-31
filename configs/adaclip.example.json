@@ -11,13 +11,17 @@
       "repository": "/path/to/AdaCLIP",
       "target_dataset": "mvtec",
       "checkpoint": "visa_clinicdb",
-      "download_root": "/path/to/adaclip-weights"
+      "download_root": "/path/to/adaclip-weights",
+      "seed": 111,
+      "hsf_seed": 111
     },
     "visa": {
       "repository": "/path/to/AdaCLIP",
       "target_dataset": "visa",
       "checkpoint": "mvtec_colondb",
-      "download_root": "/path/to/adaclip-weights"
+      "download_root": "/path/to/adaclip-weights",
+      "seed": 111,
+      "hsf_seed": 111
     }
   },
   "device": "cuda",
