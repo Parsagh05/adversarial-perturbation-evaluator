@@ -1,0 +1,31 @@
+{
+  "attacks_root": "/path/to/perturbations",
+  "output_root": "/path/to/results",
+  "model": "tipsomaly",
+  "mvtec_root": "/path/to/mvtec_anomaly_detection",
+  "visa_root": "/path/to/VisA_20220922",
+  "targets": ["mvtec", "visa"],
+  "scopes": ["per_dataset", "cross_dataset", "per_category", "per_image"],
+  "model_kwargs_by_target": {
+    "mvtec": {
+      "repository": "/path/to/Tipsomaly",
+      "target_dataset": "mvtec",
+      "models_dir": "/path/to/tips",
+      "checkpoint": "trained_on_visa_default",
+      "epoch": 2
+    },
+    "visa": {
+      "repository": "/path/to/Tipsomaly",
+      "target_dataset": "visa",
+      "models_dir": "/path/to/tips",
+      "checkpoint": "trained_on_mvtec_default",
+      "epoch": 2
+    }
+  },
+  "device": "cuda",
+  "batch_size": 8,
+  "image_size": 518,
+  "gaussian_sigma": 4.0,
+  "max_sample_conditions": 25,
+  "qualitative_threshold_modes": ["clean_pixel_f1"]
+}

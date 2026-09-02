@@ -9,6 +9,9 @@ def test_kaggle_notebook_code_cells_compile_and_clone_evaluator():
         Path("notebooks/kaggle_adaclip.ipynb"),
         Path("notebooks/kaggle_faprompt.ipynb"),
         Path("notebooks/kaggle_crane.ipynb"),
+        Path("notebooks/kaggle_aprilgan.ipynb"),
+        Path("notebooks/kaggle_fbclip.ipynb"),
+        Path("notebooks/kaggle_tipsomaly.ipynb"),
     ):
         notebook = json.loads(path.read_text(encoding="utf-8"))
         source = "\n".join(
@@ -28,7 +31,10 @@ def test_every_adapter_ships_a_config_notebook_and_script():
 
     # Adapters are registered under aliases too; the canonical name is the one
     # the config's "model" field uses.
-    canonical = {"anomalyclip", "aaclip", "adaclip", "faprompt", "crane"}
+    canonical = {
+        "anomalyclip", "aaclip", "adaclip", "faprompt", "crane",
+        "aprilgan", "fbclip", "tipsomaly",
+    }
     assert canonical <= set(adapter_names())
     for model in sorted(canonical):
         for path in (

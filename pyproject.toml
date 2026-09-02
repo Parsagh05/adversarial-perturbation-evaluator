@@ -26,6 +26,31 @@ anomalyclip = [
   "timm==0.6.13",
   "torchvision>=0.15",
 ]
+aprilgan = [
+  # The official repository imports these from open_clip/, model.py and
+  # prompt_ensemble.py.
+  "ftfy>=6.0",
+  "huggingface-hub>=0.20",
+  "regex>=2023.0",
+  "timm>=0.9",
+  "torchvision>=0.15",
+  "transformers>=4.30",
+]
+fbclip = [
+  # Weights are published only as a Google Drive folder, so gdown fetches them.
+  "ftfy>=6.0",
+  "gdown>=5.0",
+  "regex>=2023.0",
+  "timm>=0.9",
+  "torchvision>=0.15",
+]
+tipsomaly = [
+  # model/omaly imports jax at module scope even on the TIPS path, and the TIPS
+  # tokenizer is a sentencepiece model. xformers is optional and guarded.
+  "jax>=0.4",
+  "sentencepiece>=0.2",
+  "torchvision>=0.15",
+]
 crane = [
   # The official repository imports these from models/ and utils/.
   "ftfy>=6.0",
