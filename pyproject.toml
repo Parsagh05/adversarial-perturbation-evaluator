@@ -51,6 +51,17 @@ tipsomaly = [
   "sentencepiece>=0.2",
   "torchvision>=0.15",
 ]
+vcpclip = [
+  # Weights are published as individual Google Drive files, so gdown fetches
+  # them; the official models/ package imports these directly.
+  "ftfy>=6.0",
+  "gdown>=5.0",
+  "regex>=2023.0",
+  "scikit-learn>=1.2",
+  # gaussian_filter(axes=...), which calcuate_metric uses, needs scipy 1.11.
+  "scipy>=1.11",
+  "torchvision>=0.15",
+]
 crane = [
   # The official repository imports these from models/ and utils/.
   "ftfy>=6.0",

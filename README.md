@@ -5,8 +5,8 @@ the perturbation datasets produced by the object-agnostic prompt experiments.
 It does not generate or optimize attacks. The perturbation manifest and the
 fixed `evaluation_test_indices.csv` are always authoritative.
 
-The target adapters are AnomalyCLIP, AA-CLIP, AdaCLIP, FAPrompt, and Crane. The shared
-evaluator owns attack
+The target adapters are AnomalyCLIP, AA-CLIP, AdaCLIP, FAPrompt, Crane,
+APRIL-GAN, FB-CLIP, Tipsomaly, and VCP-CLIP. The shared evaluator owns attack
 discovery, fixed-cohort validation, RGB construction, metrics, thresholds, and
 result files; model-specific loading, preprocessing, prompting, and inference
 stay behind a small adapter interface.
@@ -151,6 +151,52 @@ released checkpoints inside the repository, so cloning it is the download. The
 MVTec target uses `trained_on_visa_crane` and the VisA target uses
 `trained_on_mvtec_crane`, exactly as `test.sh` does.
 
+APRIL-GAN uses the settings of the official `test_zero_shot.sh`, not the
+argparse defaults, which describe its few-shot `ViT-B-16` run: `ViT-L-14-336`
+with OpenAI weights, 518-pixel inputs, seed 10, feature levels 6/12/18/24, and
+logit scale 100. Its `test.py` sums the per-layer maps and applies no Gaussian
+filter at all, so the shared evaluator sets `gaussian_sigma=0` for APRIL-GAN.
+Both released checkpoints ship in-repo under `exps/pretrained`, so cloning it is
+the download; the MVTec target uses `visa_pretrained` and the VisA target uses
+`mvtec_pretrained`.
+
+FB-CLIP uses the official `ViT-L/14@336px` path, 518-pixel inputs, seed 111,
+prompt depth/context values 9/12/4, and the `test.sh` feature layers
+1/6/12/18/24, which override the argparse default. It returns patch-resolution
+maps that the shared evaluator upsamples and blurs at `gaussian_sigma=4.0`,
+matching the official loop. Its released weights are Drive-only, so the adapter
+fetches them by pinned file ID and verifies a pinned sha256; the MVTec target
+uses `train_on_visa` and the VisA target uses `train_on_mvtec`. The adapter
+rejects a checkpoint without `model_trainable_params`, where the official script
+only warns and silently keeps randomly initialized tensors.
+
+Tipsomaly follows the official `reproduce.sh`: the TIPS `l14h` backbone,
+518-pixel inputs, seed 111, industrial fixed prompts, 8 learnable prompt tokens
+with `concat` learning, decoupled prompting, and local-to-global aggregation.
+TIPS is trained **without image normalization** (`create_transforms_tips` uses
+mean 0 and std 1), so the adapter leaves inputs in `[0, 1]`. Its
+`regrid_upsample_smooth` bilinear-upsamples and then applies
+`gaussian_filter(sigma=4)`, which the shared evaluator reproduces at
+`gaussian_sigma=4.0`. The official loop reports two image scores, one per TIPS
+class token; `cls_token_index` (default 0) selects which one is evaluated.
+Learned prompts ship in-repo under `workspaces/`, so cloning it is the download;
+the MVTec target uses `trained_on_visa_default` and the VisA target uses
+`trained_on_mvtec_default`.
+
+VCP-CLIP uses the settings of the official `test.sh`, which match its argparse
+defaults: `ViT-L-14-336` on the exact OpenAI `ViT-L-14-336px.pt` backbone,
+518-pixel inputs, seed 333, feature levels 6/12/18/24, `prompt_len` 2,
+`deep_prompt_len` 1, `total_d_layer_len` 11, and `use_global` enabled. Its
+`calcuate_metric` blends the two layer-averaged maps at `alpha=0.2`, blurs the
+blend at **sigma 8**, and only then min-max normalizes each category's maps and
+image scores; because the blur precedes that normalization, the adapter applies
+it internally and the shared evaluator sets `gaussian_sigma=0` for VCP-CLIP.
+Image scores are the summed means of each unblurred map's top-2000 pixels. The
+category-level min/max aggregation is fitted on clean predictions and frozen
+before adversarial evaluation, as for AA-CLIP. The backbone is downloaded from
+OpenAI and the released weights from Google Drive, both checksum-verified; the
+MVTec target uses `train_visa` and the VisA target uses `train_mvtec`.
+
 Batch size is an execution-only setting and may be reduced for Kaggle without
 changing model outputs.
 
@@ -172,13 +218,14 @@ For AA-CLIP, install with `python -m pip install -e ".[aaclip]"`, start from
 `configs/adaclip.example.json`; its `checkpoint` accepts either a local path or
 one of the released names `visa_clinicdb`, `mvtec_colondb`, or `all`, and a
 name is downloaded into `download_root` and verified against a pinned sha256.
-FAPrompt and Crane follow the same shape through `".[faprompt]"` and
-`".[crane]"` with `configs/faprompt.example.json` and
-`configs/crane.example.json`. The FAPrompt extra pulls `gdown` because its
-weights are Drive-only; if Drive rate-limits the download, fetch the two `.pth`
-files by hand and pass their paths as `checkpoint`. These extras install
-model runtime libraries without replacing the environment's PyTorch with an
-old repository pin. The AA-CLIP extra also includes `ipdb` and `regex`, which
+FAPrompt, Crane, APRIL-GAN, FB-CLIP, Tipsomaly, and VCP-CLIP follow the same
+shape through `".[faprompt]"`, `".[crane]"`, `".[aprilgan]"`, `".[fbclip]"`,
+`".[tipsomaly]"`, and `".[vcpclip]"` with the matching
+`configs/<model>.example.json`. The FAPrompt, FB-CLIP, and VCP-CLIP extras pull
+`gdown` because those weights are Drive-only; if Drive rate-limits a download,
+fetch the `.pth` files by hand and pass their paths as `checkpoint`. These
+extras install model runtime libraries without replacing the environment's
+PyTorch with an old repository pin. The AA-CLIP extra also includes `ipdb` and `regex`, which
 the official repository imports from `model/`, `forward_utils.py`, and its
 tokenizer but omits from its own `requirements.txt`.
 
@@ -186,10 +233,9 @@ For local/server runs, each adapter expects an existing checkout of its official
 repository and released checkpoints. Target-specific paths are configured under
 `model_kwargs_by_target`.
 
-For Kaggle, use `notebooks/kaggle_anomalyclip.ipynb`,
-`notebooks/kaggle_aaclip.ipynb`, `notebooks/kaggle_adaclip.ipynb`,
-`notebooks/kaggle_faprompt.ipynb`, or `notebooks/kaggle_crane.ipynb`, enable
-GPU and Internet, and attach only:
+For Kaggle, use the `notebooks/kaggle_<model>.ipynb` matching the adapter
+(`anomalyclip`, `aaclip`, `adaclip`, `faprompt`, `crane`, `aprilgan`, `fbclip`,
+`tipsomaly`, or `vcpclip`), enable GPU and Internet, and attach only:
 
 - MVTec AD;
 - VisA;
