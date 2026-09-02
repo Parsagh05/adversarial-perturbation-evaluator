@@ -7,6 +7,8 @@ def test_kaggle_notebook_code_cells_compile_and_clone_evaluator():
         Path("notebooks/kaggle_anomalyclip.ipynb"),
         Path("notebooks/kaggle_aaclip.ipynb"),
         Path("notebooks/kaggle_adaclip.ipynb"),
+        Path("notebooks/kaggle_faprompt.ipynb"),
+        Path("notebooks/kaggle_crane.ipynb"),
     ):
         notebook = json.loads(path.read_text(encoding="utf-8"))
         source = "\n".join(

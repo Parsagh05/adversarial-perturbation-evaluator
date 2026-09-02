@@ -5,7 +5,8 @@ the perturbation datasets produced by the object-agnostic prompt experiments.
 It does not generate or optimize attacks. The perturbation manifest and the
 fixed `evaluation_test_indices.csv` are always authoritative.
 
-The first target adapters are AnomalyCLIP, AA-CLIP, and AdaCLIP. The shared evaluator owns attack
+The target adapters are AnomalyCLIP, AA-CLIP, AdaCLIP, FAPrompt, and Crane. The shared
+evaluator owns attack
 discovery, fixed-cohort validation, RGB construction, metrics, thresholds, and
 result files; model-specific loading, preprocessing, prompting, and inference
 stay behind a small adapter interface.
@@ -128,6 +129,28 @@ and the official evaluation runs under `torch.cuda.amp.autocast`. Its official
 batch-safe, so the adapter forwards a single image at a time whatever
 `batch_size` is set to.
 
+FAPrompt uses the official `ViT-L/14@336px` path, 518-pixel inputs, seed 111,
+prompt depth/context values 9/12/4, DPAM layer 20, temperature 0.07, and the
+hardcoded 5/2 positive/negative context lengths with ten negative prompts. Its
+score is `0.5 * (text_probs + map_max_score)` over two similarity passes, the
+second conditioned on each image's own top-10 patch tokens, so images are
+evaluated one at a time as in the official `test.py`. Its official
+`gaussian_filter` uses **sigma 10**, so the shared evaluator sets
+`gaussian_sigma=10.0` for FAPrompt. The released weights are published only as a
+Google Drive folder, so the adapter fetches them by pinned file ID through
+`gdown` and verifies a pinned sha256; the MVTec target uses `train_on_visa` and
+the VisA target uses `train_on_mvtecad`.
+
+Crane uses the official `ViT-L/14@336px` path, 518-pixel inputs, seed 111,
+prompt depth/context values 9/12/4, `replace_with_EAttn` to layer 20 with
+`qq+kk+vv` attention, and score-base pooling at alpha 0.5. This is the base
+`Crane` row of the paper's Table 1, which `test.sh` runs with
+`--dino_model none --soft_mean True --features_list 6 12 18 24 --epoch 5`; the
+`Crane+` variant additionally loads DINOv2 and is not covered. Crane ships its
+released checkpoints inside the repository, so cloning it is the download. The
+MVTec target uses `trained_on_visa_crane` and the VisA target uses
+`trained_on_mvtec_crane`, exactly as `test.sh` does.
+
 Batch size is an execution-only setting and may be reduced for Kaggle without
 changing model outputs.
 
@@ -148,7 +171,12 @@ For AA-CLIP, install with `python -m pip install -e ".[aaclip]"`, start from
 `python -m pip install -e ".[adaclip]"` and start from
 `configs/adaclip.example.json`; its `checkpoint` accepts either a local path or
 one of the released names `visa_clinicdb`, `mvtec_colondb`, or `all`, and a
-name is downloaded into `download_root` and verified against a pinned sha256. These extras install
+name is downloaded into `download_root` and verified against a pinned sha256.
+FAPrompt and Crane follow the same shape through `".[faprompt]"` and
+`".[crane]"` with `configs/faprompt.example.json` and
+`configs/crane.example.json`. The FAPrompt extra pulls `gdown` because its
+weights are Drive-only; if Drive rate-limits the download, fetch the two `.pth`
+files by hand and pass their paths as `checkpoint`. These extras install
 model runtime libraries without replacing the environment's PyTorch with an
 old repository pin. The AA-CLIP extra also includes `ipdb` and `regex`, which
 the official repository imports from `model/`, `forward_utils.py`, and its
@@ -159,7 +187,8 @@ repository and released checkpoints. Target-specific paths are configured under
 `model_kwargs_by_target`.
 
 For Kaggle, use `notebooks/kaggle_anomalyclip.ipynb`,
-`notebooks/kaggle_aaclip.ipynb`, or `notebooks/kaggle_adaclip.ipynb`, enable
+`notebooks/kaggle_aaclip.ipynb`, `notebooks/kaggle_adaclip.ipynb`,
+`notebooks/kaggle_faprompt.ipynb`, or `notebooks/kaggle_crane.ipynb`, enable
 GPU and Internet, and attach only:
 
 - MVTec AD;
