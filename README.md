@@ -6,7 +6,8 @@ It does not generate or optimize attacks. The perturbation manifest and the
 fixed `evaluation_test_indices.csv` are always authoritative.
 
 The target adapters are AnomalyCLIP, AA-CLIP, AdaCLIP, FAPrompt, Crane,
-APRIL-GAN, FB-CLIP, Tipsomaly, and VCP-CLIP. The shared evaluator owns attack
+APRIL-GAN, FB-CLIP, Tipsomaly, VCP-CLIP, and FiLo. The shared evaluator owns
+attack
 discovery, fixed-cohort validation, RGB construction, metrics, thresholds, and
 result files; model-specific loading, preprocessing, prompting, and inference
 stay behind a small adapter interface.
@@ -197,6 +198,36 @@ before adversarial evaluation, as for AA-CLIP. The backbone is downloaded from
 OpenAI and the released weights from Google Drive, both checksum-verified; the
 MVTec target uses `train_visa` and the VisA target uses `train_mvtec`.
 
+FiLo uses the official `test.sh` and its argparse defaults: CLIP `ViT-L-14-336`
+with OpenAI weights at 518 pixels, feature levels 6/12/18/24, `n_ctx` 12, and a
+fine-tuned Grounding DINO (`GroundingDINO_SwinT_OGC`) at box/area thresholds
+0.25/0.7. Grounding DINO is captioned with the GPT-written descriptions of the
+category, the highest-scoring anomaly box selects one of nine position words for
+the position-enhanced prompts, and the final map is damped to 0.7 outside the
+proposed boxes. Its `GaussianBlur(3, 4.0)` runs per layer inside the model, so
+the shared evaluator sets `gaussian_sigma=0` for FiLo, and the image score is
+`(abnormal text logit + map max) / 2` taken before the box damping. All four
+weights are pulled from the authors' HuggingFace repository and verified against
+its LFS digests; the MVTec target uses `filo_train_on_visa` with
+`grounding_train_on_visa` and the VisA target the MVTec-trained pair. The FiLo
+head stores the frozen CLIP alongside its trained modules, so each target needs
+about 3.3 GB of weights.
+
+Two FiLo details differ from a naive reading of its `test.py`. Its argparse
+exposes `--text_threshold`, but `test.py` immediately overwrites it with
+`box_threshold`, so only `box_threshold` has any effect and the adapter exposes
+only that. And the official loop re-reads each image from disk for Grounding
+DINO while feeding CLIP the transformed tensor; the adapter drives both branches
+from the evaluated tensor instead, since re-reading the file would bypass the
+perturbation entirely. That branch's aspect-preserving resize is a no-op on the
+square 518-pixel cohort images, so the only remaining difference is its ImageNet
+normalization, which the adapter applies. Grounding DINO also calls a compiled
+CUDA extension for deformable attention whenever its tensors are on a GPU and
+raises when it was never built, so the adapter falls back to the reference
+PyTorch implementation the same module already uses on CPU; `runtime_metadata`
+records which path ran. FiLo scores one image at a time whatever `batch_size` is
+set to, because Grounding DINO picks a position word per image.
+
 Batch size is an execution-only setting and may be reduced for Kaggle without
 changing model outputs.
 
@@ -218,14 +249,15 @@ For AA-CLIP, install with `python -m pip install -e ".[aaclip]"`, start from
 `configs/adaclip.example.json`; its `checkpoint` accepts either a local path or
 one of the released names `visa_clinicdb`, `mvtec_colondb`, or `all`, and a
 name is downloaded into `download_root` and verified against a pinned sha256.
-FAPrompt, Crane, APRIL-GAN, FB-CLIP, Tipsomaly, and VCP-CLIP follow the same
-shape through `".[faprompt]"`, `".[crane]"`, `".[aprilgan]"`, `".[fbclip]"`,
-`".[tipsomaly]"`, and `".[vcpclip]"` with the matching
-`configs/<model>.example.json`. The FAPrompt, FB-CLIP, and VCP-CLIP extras pull
-`gdown` because those weights are Drive-only; if Drive rate-limits a download,
-fetch the `.pth` files by hand and pass their paths as `checkpoint`. These
-extras install model runtime libraries without replacing the environment's
-PyTorch with an old repository pin. The AA-CLIP extra also includes `ipdb` and `regex`, which
+FAPrompt, Crane, APRIL-GAN, FB-CLIP, Tipsomaly, VCP-CLIP, and FiLo follow the
+same shape through `".[faprompt]"`, `".[crane]"`, `".[aprilgan]"`,
+`".[fbclip]"`, `".[tipsomaly]"`, `".[vcpclip]"`, and `".[filo]"` with the
+matching `configs/<model>.example.json`. The FAPrompt, FB-CLIP, and VCP-CLIP
+extras pull `gdown` because those weights are Drive-only; if Drive rate-limits a
+download, fetch the `.pth` files by hand and pass their paths as `checkpoint`.
+FiLo takes its weights from HuggingFace instead, and its extra carries Grounding
+DINO's own dependencies. These extras install model runtime libraries without
+replacing the environment's PyTorch with an old repository pin. The AA-CLIP extra also includes `ipdb` and `regex`, which
 the official repository imports from `model/`, `forward_utils.py`, and its
 tokenizer but omits from its own `requirements.txt`.
 
@@ -235,7 +267,7 @@ repository and released checkpoints. Target-specific paths are configured under
 
 For Kaggle, use the `notebooks/kaggle_<model>.ipynb` matching the adapter
 (`anomalyclip`, `aaclip`, `adaclip`, `faprompt`, `crane`, `aprilgan`, `fbclip`,
-`tipsomaly`, or `vcpclip`), enable GPU and Internet, and attach only:
+`tipsomaly`, `vcpclip`, or `filo`), enable GPU and Internet, and attach only:
 
 - MVTec AD;
 - VisA;
