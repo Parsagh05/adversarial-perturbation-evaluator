@@ -129,3 +129,67 @@ def test_aprilgan_few_shot_score_freezes_the_clean_peak_range():
     # normalized part exceeds 1 instead of being squashed back into range.
     assert fused[0] == pytest.approx(0.0, abs=1e-6)
     assert fused[1] == pytest.approx(0.5 * (1.0 + 2.0), abs=1e-6)
+
+
+def test_subspacead_and_inpformer_are_registered():
+    for name in ("subspacead", "subspace-ad", "inpformer", "inp-former"):
+        assert name in adapter_names()
+
+
+def test_subspacead_follows_the_benchmark_script():
+    from fpeval.adapters.subspacead import LAYERS, NO_AUG_CATEGORIES, SHOT_VALUES
+
+    assert LAYERS == (-12, -13, -14, -15, -16, -17, -18)
+    assert SHOT_VALUES == (1, 2, 4)
+    # main.py hardcodes transistor as the no-augmentation category.
+    assert NO_AUG_CATEGORIES == {"transistor"}
+
+
+def test_inpformer_releases_one_model_per_dataset_and_shot():
+    from fpeval.adapters.inpformer import CHECKPOINTS, SHOT_VALUES
+
+    assert SHOT_VALUES == (1, 2, 4)
+    assert set(CHECKPOINTS) == {
+        (dataset, shot) for dataset in ("mvtec", "visa") for shot in SHOT_VALUES
+    }
+    for filename, file_id in CHECKPOINTS.values():
+        assert filename.endswith(".pth")
+        assert len(file_id) > 20
+
+
+def test_inpformer_rejects_an_unreleased_shot_count(tmp_path):
+    from fpeval.adapters.inpformer import resolve_checkpoint
+
+    with pytest.raises(KeyError, match="no released few-shot model"):
+        resolve_checkpoint("mvtec", 8, download_root=tmp_path)
+    with pytest.raises(KeyError, match="no released few-shot model"):
+        resolve_checkpoint("btad", 4, download_root=tmp_path)
+
+
+def test_inpformer_accepts_an_explicit_checkpoint(tmp_path):
+    from fpeval.adapters.inpformer import resolve_checkpoint
+
+    path = tmp_path / "model.pth"
+    path.write_bytes(b"weights")
+    assert resolve_checkpoint("mvtec", 4, checkpoint=str(path)) == path.resolve()
+
+
+def test_new_few_shot_adapters_reject_bad_settings(tmp_path):
+    common = {"repository": str(tmp_path), "target_dataset": "mvtec"}
+    with pytest.raises(ValueError, match=r"k_shot in \(1, 2, 4\)"):
+        create_adapter("subspacead", **common, k_shot=3)
+    with pytest.raises(ValueError, match="image_res=672"):
+        create_adapter("subspacead", **common, image_res=518)
+    with pytest.raises(ValueError, match=r"few-shot models for \(1, 2, 4\)"):
+        create_adapter("inpformer", **common, shot=8)
+    with pytest.raises(ValueError, match="input_size=448 and crop_size=392"):
+        create_adapter("inpformer", **common, input_size=518, crop_size=518)
+    for name in ("subspacead", "inpformer"):
+        with pytest.raises(ValueError, match="must be 'mvtec' or 'visa'"):
+            create_adapter(name, repository=str(tmp_path), target_dataset="btad")
+
+
+def test_new_few_shot_adapters_report_an_incomplete_repository(tmp_path):
+    for name in ("subspacead", "inpformer"):
+        with pytest.raises(FileNotFoundError, match="repository is incomplete"):
+            create_adapter(name, repository=str(tmp_path), target_dataset="mvtec")

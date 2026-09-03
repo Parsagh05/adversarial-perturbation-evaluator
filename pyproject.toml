@@ -70,6 +70,22 @@ mrad = [
   "thop>=0.1",
   "torchvision>=0.15",
 ]
+inpformer = [
+  # Weights are Drive-only, so gdown fetches them; the encoder is pulled from
+  # dl.fbaipublicfiles.com by the repository's own loader.
+  "gdown>=5.0",
+  "scikit-learn>=1.2",
+  "scipy>=1.10",
+  "timm>=0.9",
+  "torchvision>=0.15",
+]
+subspacead = [
+  # Training-free: the DINOv2 backbone comes from HuggingFace at load time.
+  "opencv-python>=4.8",
+  "scikit-learn>=1.2",
+  "torchvision>=0.15",
+  "transformers>=4.40",
+]
 winclip = [
   # WinCLIP is training-free; open_clip downloads the laion400m backbone.
   "ftfy>=6.0",

@@ -7,8 +7,8 @@ fixed `evaluation_test_indices.csv` are always authoritative.
 
 The target adapters are AnomalyCLIP, AA-CLIP, AdaCLIP, FAPrompt, Crane,
 APRIL-GAN, FB-CLIP, Tipsomaly, VCP-CLIP, FiLo, Bayes-PFL, AF-CLIP, CoPS, MRAD
-and WinCLIP, plus few-shot variants of WinCLIP, AF-CLIP and APRIL-GAN. The
-shared evaluator owns attack
+and WinCLIP, plus few-shot SubspaceAD and INP-Former and few-shot variants of
+WinCLIP, AF-CLIP and APRIL-GAN. The shared evaluator owns attack
 discovery, fixed-cohort validation, RGB construction, metrics, thresholds, and
 result files; model-specific loading, preprocessing, prompting, and inference
 stay behind a small adapter interface.
@@ -359,6 +359,36 @@ than unified:
 Whichever protocol applies, the drawn file names land in `runtime_metadata`
 under `reference_images`, so a result always records the exact reference set.
 
+Two further few-shot adapters are not variants of a zero-shot one:
+
+**SubspaceAD** follows `scripts/benchmark_few_shot.sh`: a frozen
+`dinov2-with-registers-giant` at **672 pixels**, hidden layers -12 to -18
+averaged, PCA keeping 0.99 explained variance, reconstruction-residual scoring
+and the `mtop1p` image score. It is training-free, so the only download is the
+HuggingFace backbone. The subspace is fitted per category on k normal images
+plus 30 rotation augmentations each, disabled for `transistor` as main.py does,
+and `post_process_map` blurs at sigma 4 with a 3x3 kernel internally so
+`gaussian_sigma` stays 0. Its k-shot draw is a `random.shuffle` under `--seed 42`
+over the repository's own file ordering, which cannot be reproduced from outside;
+the adapter shuffles the sorted normal training images under that seed instead.
+Critically, the reference images are pushed through the **same** 518-then-672
+path as the cohort, so the fitted subspace and the scored features come from one
+distribution rather than two.
+
+**INP-Former** follows `INP_Former_Few_Shot.py`: the `dinov2reg_vit_base_14`
+encoder, a 448-pixel resize with a **392-pixel centre crop**, 6 intrinsic normal
+prototypes, target layers 2-9 fused as two groups of four, and the
+`evaluation_batch` path at `max_ratio=0.01` and `resize_mask=256`. Its
+`get_gaussian_kernel(5, 4)` blur runs inside that path, so `gaussian_sigma` is 0.
+
+INP-Former is the one few-shot adapter that needs **no runtime reference set**:
+its released weights were trained on k normal images per category of the target
+dataset, so the shots are baked into the checkpoint and `shot` selects which of
+the six released files (two datasets x 1/2/4 shots, ~620 MB each) to fetch. That
+also means there is no cross-dataset variant. Note that its centre crop discards
+the outer border of the 518-pixel cohort image, so a perturbation placed there
+never reaches the model - `runtime_metadata` records both sizes.
+
 Two of the three change more than the map. AF-CLIP's `detect_forward` stops
 being the zero-shot branch and returns `memory + alpha * segmentation` for both
 the map and the image score, which is where its otherwise-dead `alpha` of 0.1
@@ -420,8 +450,8 @@ adapter
 
 Notebooks and run scripts are split by regime: `notebooks/zero_shot/` and
 `scripts/zero_shot/` hold everything above, and `notebooks/few_shot/` and
-`scripts/few_shot/` hold `winclip_fewshot`, `afclip_fewshot` and
-`aprilgan_fewshot`.
+`scripts/few_shot/` hold `winclip_fewshot`, `afclip_fewshot`,
+`aprilgan_fewshot`, `subspacead` and `inpformer`.
 
 - MVTec AD;
 - VisA;

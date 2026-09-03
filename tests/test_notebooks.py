@@ -9,7 +9,10 @@ ZERO_SHOT = {
     "aprilgan", "fbclip", "tipsomaly", "vcpclip", "filo",
     "bayespfl", "afclip", "cops", "mrad", "winclip",
 }
-FEW_SHOT = {"winclip_fewshot", "afclip_fewshot", "aprilgan_fewshot"}
+FEW_SHOT = {
+    "winclip_fewshot", "afclip_fewshot", "aprilgan_fewshot",
+    "subspacead", "inpformer",
+}
 
 
 def regime(model: str) -> str:
