@@ -362,10 +362,16 @@ For local/server runs, each adapter expects an existing checkout of its official
 repository and released checkpoints. Target-specific paths are configured under
 `model_kwargs_by_target`.
 
-For Kaggle, use the `notebooks/kaggle_<model>.ipynb` matching the adapter
+For Kaggle, use the `notebooks/zero_shot/kaggle_<model>.ipynb` matching the
+adapter
 (`anomalyclip`, `aaclip`, `adaclip`, `faprompt`, `crane`, `aprilgan`, `fbclip`,
 `tipsomaly`, `vcpclip`, `filo`, `bayespfl`, `afclip`, `cops`, `mrad`, or
 `winclip`), enable GPU and Internet, and attach only:
+
+Notebooks and run scripts are split by regime: `notebooks/zero_shot/` and
+`scripts/zero_shot/` hold everything above, and `notebooks/few_shot/` and
+`scripts/few_shot/` are reserved for adapters that build a k-shot normal
+reference set.
 
 - MVTec AD;
 - VisA;
