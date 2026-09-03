@@ -427,8 +427,10 @@ returns two image-level numbers. It does compute a per-patch residual internally
 - `patch_ref_map`, the mean over the three layers of `0.5 * (1 - cosine)` to the
 nearest normal patch - and half the final image score is precisely that map's
 maximum. The adapter exposes that 15x15 map as the localization output,
-recovering it exactly through a forward hook on `diff_head` rather than editing
-the official code. It is the model's own map and it is tied to the model's own
+recovering it exactly by wrapping `diff_head`'s `forward` rather than editing the
+official code - a `register_forward_hook` would not do, because the official code
+calls `self.diff_head.forward(...)` directly and hooks only fire through
+`Module.__call__`. It is the model's own map and it is tied to the model's own
 score, but it is not a published result: **InCTRL's pixel AUROC, pixel F1 and
 AUPRO here have no paper number to be compared against, while its image-level
 metrics do.** `runtime_metadata` records this as `map_is_published_result:

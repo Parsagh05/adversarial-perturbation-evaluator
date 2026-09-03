@@ -154,3 +154,47 @@ def test_inctrl_finds_the_shot_folder_of_sample_prompts(tmp_path):
         "visa", 2, few_shot_dir=str(folder)
     )
     assert resolved == folder
+
+
+def test_inctrl_records_a_direct_forward_call():
+    """The official code calls ``self.diff_head.forward(x)``, not the module.
+
+    register_forward_hook only fires through ``Module.__call__``, so a hook would
+    silently never run and the recovered map would be missing entirely.
+    """
+    import torch
+
+    class Head(torch.nn.Module):
+        def forward(self, x):
+            return x.sum(dim=1, keepdim=True)
+
+    head = Head()
+    inputs, outputs = [], []
+    inctrl.record_forward(head, inputs, outputs)
+    value = torch.arange(6.0).reshape(2, 3)
+
+    # Called the way InCTRL calls it.
+    head.forward(value)
+    assert len(inputs) == 1 and torch.equal(inputs[0], value)
+    assert torch.equal(outputs[0], value.sum(dim=1, keepdim=True))
+
+    # And still recorded through the module, for good measure.
+    head(value)
+    assert len(inputs) == 2 and len(outputs) == 2
+
+
+def test_inctrl_recovers_the_patch_map_from_the_recorded_call():
+    """patch_ref_map = holistic - (holistic.max() - fg), with fg = 2*final - hl."""
+    import torch
+
+    patch_map = torch.tensor([[0.1, 0.7, 0.3, 0.2]])
+    text_score, image_reference = 0.25, 0.4
+    holistic = patch_map + text_score + image_reference
+    head_score = torch.tensor([[0.9]])
+    foreground = patch_map.max(dim=1).values
+    final_score = (head_score.reshape(-1) + foreground) / 2
+
+    recovered_foreground = 2.0 * final_score - head_score.reshape(-1)
+    offset = holistic.max(dim=1).values - recovered_foreground
+    recovered = holistic - offset.unsqueeze(1)
+    assert torch.allclose(recovered, patch_map, atol=1e-6)

@@ -90,6 +90,25 @@ def _import_official_repository(repository: str | Path):
     )
 
 
+def record_forward(module, inputs: list, outputs: list) -> None:
+    """Record what a module is called with, even when ``forward`` is called directly.
+
+    ``register_forward_hook`` only fires through ``Module.__call__``. InCTRL's
+    forward invokes ``self.diff_head.forward(...)``, so the bound method is
+    replaced instead.
+    """
+
+    original = module.forward
+
+    def recording(argument, *rest, **keywords):
+        inputs.append(argument.detach())
+        result = original(argument, *rest, **keywords)
+        outputs.append(result.detach())
+        return result
+
+    module.forward = recording
+
+
 def _sha256(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as handle:
@@ -368,9 +387,12 @@ class InCTRLAdapter(ModelAdapter):
 
         # diff_head's input is text_score + img_ref_score + patch_ref_map, the
         # first two being per-image scalars broadcast over the 225 patches.
+        # The official forward calls ``self.diff_head.forward(...)`` directly
+        # rather than the module, so register_forward_hook would never fire and
+        # the method itself has to be wrapped.
         self._holistic: list[torch.Tensor] = []
         self._head_score: list[torch.Tensor] = []
-        self._model.diff_head.register_forward_hook(self._capture)
+        record_forward(self._model.diff_head, self._holistic, self._head_score)
 
         self._runtime_metadata = {
             "adapter": self.name,
@@ -395,10 +417,6 @@ class InCTRLAdapter(ModelAdapter):
             "gaussian_applied_inside_adapter": False,
             "cohort_image_size": self.image_size,
         }
-
-    def _capture(self, module, inputs, output) -> None:
-        self._holistic.append(inputs[0].detach())
-        self._head_score.append(output.detach())
 
     def runtime_metadata(self) -> dict[str, object]:
         data = dict(self._runtime_metadata)
