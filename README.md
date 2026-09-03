@@ -6,8 +6,9 @@ It does not generate or optimize attacks. The perturbation manifest and the
 fixed `evaluation_test_indices.csv` are always authoritative.
 
 The target adapters are AnomalyCLIP, AA-CLIP, AdaCLIP, FAPrompt, Crane,
-APRIL-GAN, FB-CLIP, Tipsomaly, VCP-CLIP, FiLo, Bayes-PFL, AF-CLIP, CoPS, MRAD,
-and WinCLIP. The shared evaluator owns attack
+APRIL-GAN, FB-CLIP, Tipsomaly, VCP-CLIP, FiLo, Bayes-PFL, AF-CLIP, CoPS, MRAD
+and WinCLIP, plus few-shot variants of WinCLIP, AF-CLIP and APRIL-GAN. The
+shared evaluator owns attack
 discovery, fixed-cohort validation, RGB construction, metrics, thresholds, and
 result files; model-specific loading, preprocessing, prompting, and inference
 stay behind a small adapter interface.
@@ -325,6 +326,55 @@ L-infinity budget applies at 518 and is attenuated by that downsample. That is a
 property of evaluating a 240-pixel model against a 518-pixel perturbation, and
 `runtime_metadata` records both sizes.
 
+## Few-shot adapters
+
+Three adapters have few-shot counterparts: `winclip_fewshot`, `afclip_fewshot`
+and `aprilgan_fewshot`. Each scores the cohort against a small set of normal
+**training** images. That reference set is built once per category and never
+touched while the cohort is scored, so unlike a transductive method it never
+makes one prediction depend on which cohort images came before it. The
+references are always the clean originals, loaded through the same `load_image`
+the evaluator uses for the cohort: perturbing them would change what "normal"
+means between the two passes. Both roots therefore have to be repeated inside
+`model_kwargs_by_target` so the adapter can find them.
+
+The three official selection protocols differ, and each is reproduced rather
+than unified:
+
+- **WinCLIP** commits its selection to the repository under
+  `datasets/seeds_mvtec/<category>/selected_samples_per_run.txt`, which pins the
+  exact file stems per run and shot count, so the MVTec runs reproduce the
+  paper's exactly. `k_shot` must be 1, 5 or 10 and `experiment_indx` 0, 1 or 2.
+  VisA ships no such file — the official loader draws `random.sample` under the
+  run seed (111/333/999) — so the adapter draws deterministically from the
+  sorted normal training images with that seed.
+- **AF-CLIP** uses `np.random.choice` without replacement under the process
+  seed, and its few-shot script passes `--seed -1`, a fresh random seed per
+  repeat with five repeats averaged. There is no canonical selection, so
+  `shot_seed` pins it.
+- **APRIL-GAN** uses `torch.randint` under `--seed 42`, which samples **with
+  replacement**, so a shot may legitimately repeat. That is reproduced, not
+  corrected.
+
+Whichever protocol applies, the drawn file names land in `runtime_metadata`
+under `reference_images`, so a result always records the exact reference set.
+
+Two of the three change more than the map. AF-CLIP's `detect_forward` stops
+being the zero-shot branch and returns `memory + alpha * segmentation` for both
+the map and the image score, which is where its otherwise-dead `alpha` of 0.1
+applies. APRIL-GAN overrides `few_shot_features` to 6/12/18/24 where the
+argparse default is the few-shot ViT-B 3/6/9, adds a retrieval map to the
+zero-shot map, and changes the image score to
+`0.5 * (text probability + per-category min-max normalized map maximum)`; that
+normalization is fitted on the clean cohort and frozen for the adversarial pass.
+WinCLIP's gallery, meanwhile, turns the `textual_visual` fusion into the real
+harmonic mean instead of the halved textual map the zero-shot path reduces to.
+
+`build_image_feature_gallery` and `store_memory` both reset their state on every
+call, so the official loops only work because their training batch holds every
+shot at once; both adapters build each category's reference in a single call for
+the same reason.
+
 Batch size is an execution-only setting and may be reduced for Kaggle without
 changing model outputs.
 
@@ -370,8 +420,8 @@ adapter
 
 Notebooks and run scripts are split by regime: `notebooks/zero_shot/` and
 `scripts/zero_shot/` hold everything above, and `notebooks/few_shot/` and
-`scripts/few_shot/` are reserved for adapters that build a k-shot normal
-reference set.
+`scripts/few_shot/` hold `winclip_fewshot`, `afclip_fewshot` and
+`aprilgan_fewshot`.
 
 - MVTec AD;
 - VisA;

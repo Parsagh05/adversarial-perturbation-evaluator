@@ -1,0 +1,43 @@
+{
+  "attacks_root": "/path/to/perturbations",
+  "output_root": "/path/to/results",
+  "model": "winclip_fewshot",
+  "mvtec_root": "/path/to/mvtec_anomaly_detection",
+  "visa_root": "/path/to/VisA_20220922",
+  "targets": [
+    "mvtec",
+    "visa"
+  ],
+  "scopes": [
+    "per_dataset",
+    "cross_dataset",
+    "per_category",
+    "per_image"
+  ],
+  "model_kwargs_by_target": {
+    "mvtec": {
+      "repository": "/path/to/WinClip",
+      "target_dataset": "mvtec",
+      "mvtec_root": "/path/to/mvtec_anomaly_detection",
+      "visa_root": "/path/to/VisA_20220922",
+      "k_shot": 1,
+      "experiment_indx": 0
+    },
+    "visa": {
+      "repository": "/path/to/WinClip",
+      "target_dataset": "visa",
+      "mvtec_root": "/path/to/mvtec_anomaly_detection",
+      "visa_root": "/path/to/VisA_20220922",
+      "k_shot": 1,
+      "experiment_indx": 0
+    }
+  },
+  "device": "cuda",
+  "batch_size": 8,
+  "image_size": 518,
+  "gaussian_sigma": 0.0,
+  "max_sample_conditions": 25,
+  "qualitative_threshold_modes": [
+    "clean_pixel_f1"
+  ]
+}

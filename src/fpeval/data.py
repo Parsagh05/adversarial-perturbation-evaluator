@@ -127,6 +127,76 @@ def discover_visa(root: str | Path) -> list[Sample]:
     return samples
 
 
+def discover_mvtec_normal_reference(root: str | Path) -> list[Sample]:
+    """Return the normal training images MVTec offers as few-shot references."""
+
+    root = Path(root).expanduser().resolve()
+    if not root.is_dir():
+        raise FileNotFoundError(f"MVTec root not found: {root}")
+    samples = [
+        Sample(
+            dataset="mvtec", category=category_dir.name, defect_type="good",
+            image_path=image_path, mask_path=None, label=0, split="train",
+        )
+        for category_dir in sorted(
+            path for path in root.iterdir() if (path / "train" / "good").is_dir()
+        )
+        for image_path in _images(category_dir / "train" / "good")
+    ]
+    if not samples:
+        raise ValueError(f"No MVTec training images found below {root}")
+    return samples
+
+
+def discover_visa_normal_reference(root: str | Path) -> list[Sample]:
+    """Return the normal training images VisA offers as few-shot references."""
+
+    root = Path(root).expanduser().resolve()
+    if not root.is_dir():
+        raise FileNotFoundError(f"VisA root not found: {root}")
+    with _visa_manifest(root).open(newline="", encoding="utf-8-sig") as handle:
+        rows = [
+            {str(key).strip().lower(): str(value or "").strip() for key, value in row.items()}
+            for row in csv.DictReader(handle)
+        ]
+    samples: list[Sample] = []
+    for row in rows:
+        if row["split"].lower() != "train":
+            continue
+        if row["label"].lower() not in {"normal", "good", "0"}:
+            continue
+        image_path = _visa_file(root, row["image"])
+        if image_path is None or not image_path.is_file():
+            raise FileNotFoundError(f"VisA image missing: {image_path}")
+        samples.append(Sample(
+            dataset="visa", category=row["object"], defect_type="normal",
+            image_path=image_path, mask_path=None, label=0, split="train",
+        ))
+    samples.sort(key=lambda item: item.protocol_id)
+    if not samples:
+        raise ValueError(f"No VisA training images found below {root}")
+    return samples
+
+
+def discover_normal_reference(
+    name: str, *, mvtec_root: str | None, visa_root: str | None
+) -> dict[str, list[Sample]]:
+    """Group the normal training images by category, sorted for reproducibility."""
+
+    if name == "mvtec" and mvtec_root:
+        samples = discover_mvtec_normal_reference(mvtec_root)
+    elif name == "visa" and visa_root:
+        samples = discover_visa_normal_reference(visa_root)
+    else:
+        raise ValueError(f"Missing root or unsupported dataset: {name}")
+    grouped: dict[str, list[Sample]] = {}
+    for sample in samples:
+        grouped.setdefault(sample.category, []).append(sample)
+    for category in grouped:
+        grouped[category].sort(key=lambda item: item.image_path.name)
+    return grouped
+
+
 def discover_dataset(
     name: str, *, mvtec_root: str | None, visa_root: str | None
 ) -> list[Sample]:

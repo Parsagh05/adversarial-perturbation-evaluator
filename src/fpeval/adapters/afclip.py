@@ -12,6 +12,7 @@ import numpy as np
 import torch
 
 from .base import ModelAdapter, register_adapter
+from .reference import NormalReference
 
 
 CLIP_MEAN = (0.48145466, 0.4578275, 0.40821073)
@@ -154,7 +155,7 @@ class AFCLIPAdapter(ModelAdapter):
         )
         model.state_prompt_embedding.requires_grad_(False)
         model.adaptor.to(self.device).eval().requires_grad_(False)
-        if model.memorybank is not None:
+        if type(self) is AFCLIPAdapter and model.memorybank is not None:
             raise ValueError("AF-CLIP zero-shot evaluation must leave memorybank unset")
         self._model = model
 
@@ -207,3 +208,109 @@ class AFCLIPAdapter(ModelAdapter):
         self._model = None
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
+
+
+@register_adapter("af-clip-fewshot")
+@register_adapter("afclip_fewshot")
+class AFCLIPFewShotAdapter(AFCLIPAdapter):
+    """Official AF-CLIP few-shot inference for MVTec AD and VisA.
+
+    Adds the memory bank ``eval_all_class`` builds when ``--fewshot`` is
+    positive. With it present ``detect_forward`` stops being the zero-shot
+    branch and returns ``memory + alpha * segmentation`` for both the map and
+    the image score, which is where the otherwise-dead ``alpha`` of 0.1 finally
+    applies.
+
+    ``store_memory`` resets the bank on every call, and the official loop only
+    works because its dataloader batch holds every shot at once, so the adapter
+    stores each category's bank in a single call.
+
+    The official selection is ``np.random.choice(n, k, replace=False)`` under
+    the process seed, and its few-shot script passes ``--seed -1``, i.e. a fresh
+    random seed per repeat with five repeats averaged. There is therefore no
+    canonical selection to reproduce; the adapter pins ``shot_seed`` and records
+    which files it drew.
+    """
+
+    name = "afclip_fewshot"
+
+    def __init__(
+        self,
+        *,
+        k_shot: int = 4,
+        shot_seed: int = 122,
+        mvtec_root: str | None = None,
+        visa_root: str | None = None,
+        **kwargs,
+    ) -> None:
+        if int(k_shot) < 1:
+            raise ValueError("AF-CLIP few-shot evaluation needs k_shot >= 1")
+        target = str(kwargs["target_dataset"]).strip().lower()
+        super().__init__(**kwargs)
+        self.k_shot = int(k_shot)
+        self.shot_seed = int(shot_seed)
+        self._args.fewshot = self.k_shot
+        self._reference = NormalReference(
+            dataset=target,
+            mvtec_root=mvtec_root,
+            visa_root=visa_root,
+            image_size=self.image_size,
+        )
+        self._current: str | None = None
+        self._selection: dict[str, list[str]] = {}
+        self._runtime_metadata.update(
+            {
+                "adapter": self.name,
+                "mode": "few_shot",
+                "k_shot": self.k_shot,
+                "shot_seed": self.shot_seed,
+                "memory_layers": self._args.memory_layers,
+                # alpha is only reachable once the memory bank exists.
+                "alpha": self._args.alpha,
+                "alpha_unused_in_zero_shot": False,
+                "reference_selection": "np.random.choice without replacement",
+            }
+        )
+
+    def _ensure_memory(self, category: str) -> None:
+        if self._current == category:
+            return
+        candidates = self._reference.candidates(category)
+        rng = np.random.default_rng(self.shot_seed)
+        picked = sorted(
+            rng.choice(len(candidates), size=self.k_shot, replace=False).tolist()
+        )
+        samples = [candidates[index] for index in picked]
+        self._selection[category] = NormalReference.describe(samples)
+        references = self._reference.cached(category, samples).to(
+            self.device, dtype=torch.float32
+        )
+        references = (references - self._mean) / self._std
+        # One call: the official store_memory resets the bank each time.
+        self._model.store_memory(references, self._args)
+        self._current = category
+
+    def predict(
+        self, images: torch.Tensor, categories: Sequence[str]
+    ) -> tuple[np.ndarray, np.ndarray]:
+        if len(images) != len(categories):
+            raise ValueError("AF-CLIP received mismatched images and categories")
+        batch = images.to(self.device, dtype=torch.float32)
+        batch = (batch - self._mean) / self._std
+        scores = np.empty(len(batch), dtype=np.float32)
+        maps: list[np.ndarray] = [None] * len(batch)
+        with torch.no_grad():
+            # The memory bank is per category, so images are grouped by it.
+            for index in sorted(range(len(categories)), key=lambda i: str(categories[i])):
+                self._ensure_memory(str(categories[index]))
+                label, anomaly_map = self._model.detect_forward(
+                    batch[index : index + 1], self._args
+                )
+                scores[index] = float(label.reshape(-1)[0])
+                maps[index] = anomaly_map.squeeze(1)[0].float().cpu().numpy()
+        return scores, np.stack(maps).astype(np.float32)
+
+    def runtime_metadata(self) -> dict[str, object]:
+        data = super().runtime_metadata()
+        data["reference_images"] = dict(sorted(self._selection.items()))
+        return data

@@ -13,6 +13,7 @@ import torch
 import torch.nn.functional as F
 
 from .base import ModelAdapter, register_adapter
+from .reference import NormalReference
 
 
 CLIP_MEAN = (0.48145466, 0.4578275, 0.40821073)
@@ -232,3 +233,184 @@ class AprilGANAdapter(ModelAdapter):
         self._text_cache.clear()
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
+
+
+@register_adapter("april-gan-fewshot")
+@register_adapter("aprilgan_fewshot")
+class AprilGANFewShotAdapter(AprilGANAdapter):
+    """Official APRIL-GAN few-shot inference for MVTec AD and VisA.
+
+    Follows test_few_shot.sh, which differs from the zero-shot row in three ways
+    beyond the memory bank itself. It overrides ``few_shot_features`` to
+    6/12/18/24, where the argparse default is the few-shot ViT-B 3/6/9. It adds a
+    retrieval map - the per-patch minimum cosine distance to the memory, summed
+    over layers - to the zero-shot map. And it changes the image score to
+    ``0.5 * (text probability + per-category min-max normalized map maximum)``,
+    which the zero-shot row does not do; that normalization is fitted on the
+    clean cohort and frozen for the adversarial pass.
+
+    The official selection is ``torch.randint(0, n, (k,))`` under ``--seed 42``,
+    which samples **with replacement**, so a shot may legitimately repeat. That
+    is reproduced rather than corrected, and the drawn file names are recorded.
+    """
+
+    name = "aprilgan_fewshot"
+
+    def __init__(
+        self,
+        *,
+        k_shot: int = 4,
+        shot_seed: int = 42,
+        few_shot_features: Sequence[int] = (6, 12, 18, 24),
+        mvtec_root: str | None = None,
+        visa_root: str | None = None,
+        **kwargs,
+    ) -> None:
+        if int(k_shot) < 1:
+            raise ValueError("APRIL-GAN few-shot evaluation needs k_shot >= 1")
+        target = str(kwargs["target_dataset"]).strip().lower()
+        super().__init__(**kwargs)
+        self.k_shot = int(k_shot)
+        self.shot_seed = int(shot_seed)
+        self.few_shot_features = [int(level) for level in few_shot_features]
+        self._reference = NormalReference(
+            dataset=target,
+            mvtec_root=mvtec_root,
+            visa_root=visa_root,
+            image_size=self.image_size,
+        )
+        self._memory: dict[str, list[torch.Tensor]] = {}
+        self._selection: dict[str, list[str]] = {}
+        self._runtime_metadata.update(
+            {
+                "adapter": self.name,
+                "official_entrypoint_defaults": "APRIL-GAN/test_few_shot.sh",
+                "mode": "few_shot",
+                "k_shot": self.k_shot,
+                "shot_seed": self.shot_seed,
+                "few_shot_features": self.few_shot_features,
+                "reference_selection": "torch.randint, with replacement",
+                "image_score": "0.5 * (text probability + normalized map maximum)",
+            }
+        )
+
+    def _ensure_memory(self, category: str) -> list[torch.Tensor]:
+        cached = self._memory.get(category)
+        if cached is not None:
+            return cached
+        candidates = self._reference.candidates(category)
+        generator = torch.Generator().manual_seed(self.shot_seed)
+        # torch.randint samples with replacement, exactly as the official loader.
+        picked = torch.randint(
+            0, len(candidates), (self.k_shot,), generator=generator
+        ).tolist()
+        samples = [candidates[index] for index in picked]
+        self._selection[category] = NormalReference.describe(samples)
+        references = self._reference.load(samples).to(self.device, dtype=torch.float32)
+        references = (references - self._mean) / self._std
+        per_shot: list[list[torch.Tensor]] = []
+        with torch.no_grad():
+            for index in range(len(references)):
+                _, tokens = self._model.encode_image(
+                    references[index : index + 1], self.few_shot_features
+                )
+                per_shot.append([token[0, 1:, :] for token in tokens])
+        memory = [
+            torch.cat([shot[layer] for shot in per_shot], dim=0)
+            for layer in range(len(per_shot[0]))
+        ]
+        self._memory[category] = memory
+        return memory
+
+    def predict(
+        self, images: torch.Tensor, categories: Sequence[str]
+    ) -> tuple[np.ndarray, np.ndarray]:
+        scores, maps = super().predict(images, categories)
+        batch = images.to(self.device, dtype=torch.float32)
+        batch = (batch - self._mean) / self._std
+        with torch.no_grad():
+            for index, raw_category in enumerate(categories):
+                memory = self._ensure_memory(str(raw_category))
+                _, tokens = self._model.encode_image(
+                    batch[index : index + 1], self.few_shot_features
+                )
+                retrieval = None
+                for layer, token in enumerate(tokens):
+                    patch = torch.nn.functional.normalize(token[0, 1:, :], dim=-1)
+                    stored = torch.nn.functional.normalize(memory[layer], dim=-1)
+                    distance = (1.0 - stored @ patch.T).min(dim=0).values
+                    side = int(np.sqrt(distance.shape[0]))
+                    layer_map = F.interpolate(
+                        distance.reshape(1, 1, side, side).float(),
+                        size=self.image_size,
+                        mode="bilinear",
+                        align_corners=True,
+                    )[0, 0]
+                    retrieval = layer_map if retrieval is None else retrieval + layer_map
+                maps[index] = maps[index] + retrieval.cpu().numpy()
+        return scores, maps
+
+    def postprocess_image_scores(
+        self,
+        scores: np.ndarray,
+        map_mins: np.ndarray,
+        map_maxs: np.ndarray,
+        categories: Sequence[str],
+        *,
+        maps: np.ndarray | None = None,
+    ) -> np.ndarray:
+        return self.postprocess_image_scores_with_reference(
+            scores,
+            map_mins,
+            map_maxs,
+            categories,
+            reference_scores=scores,
+            reference_map_mins=map_mins,
+            reference_map_maxs=map_maxs,
+            reference_categories=categories,
+            maps=maps,
+            reference_maps=maps,
+        )
+
+    def postprocess_image_scores_with_reference(
+        self,
+        scores: np.ndarray,
+        map_mins: np.ndarray,
+        map_maxs: np.ndarray,
+        categories: Sequence[str],
+        *,
+        reference_scores: np.ndarray,
+        reference_map_mins: np.ndarray,
+        reference_map_maxs: np.ndarray,
+        reference_categories: Sequence[str],
+        maps: np.ndarray | None = None,
+        reference_maps: np.ndarray | None = None,
+    ) -> np.ndarray:
+        """Blend the text probability with the normalized map maximum."""
+
+        del map_mins, reference_map_mins, reference_scores, maps, reference_maps
+        scores = np.asarray(scores, dtype=np.float64)
+        peaks = np.asarray(map_maxs, dtype=np.float64)
+        reference_peaks = np.asarray(reference_map_maxs, dtype=np.float64)
+        category_array = np.asarray(categories)
+        reference_array = np.asarray(reference_categories)
+        result = scores.copy()
+        for category in dict.fromkeys(categories):
+            selected = category_array == category
+            matched = reference_array == category
+            if not matched.any():
+                continue
+            low = float(reference_peaks[matched].min())
+            high = float(reference_peaks[matched].max())
+            normalized = (
+                np.zeros_like(peaks[selected])
+                if high == low
+                else (peaks[selected] - low) / (high - low)
+            )
+            result[selected] = 0.5 * (scores[selected] + normalized)
+        return result.astype(np.float32)
+
+    def runtime_metadata(self) -> dict[str, object]:
+        data = super().runtime_metadata()
+        data["reference_images"] = dict(sorted(self._selection.items()))
+        return data
