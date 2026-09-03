@@ -6,8 +6,8 @@ It does not generate or optimize attacks. The perturbation manifest and the
 fixed `evaluation_test_indices.csv` are always authoritative.
 
 The target adapters are AnomalyCLIP, AA-CLIP, AdaCLIP, FAPrompt, Crane,
-APRIL-GAN, FB-CLIP, Tipsomaly, VCP-CLIP, FiLo, Bayes-PFL, and AF-CLIP. The
-shared evaluator owns attack
+APRIL-GAN, FB-CLIP, Tipsomaly, VCP-CLIP, FiLo, Bayes-PFL, AF-CLIP, CoPS, MRAD,
+and WinCLIP. The shared evaluator owns attack
 discovery, fixed-cohort validation, RGB construction, metrics, thresholds, and
 result files; model-specific loading, preprocessing, prompting, and inference
 stay behind a small adapter interface.
@@ -270,6 +270,61 @@ MVTec target uses the VisA-trained pair and the VisA target the MVTec-trained
 one. They are pickled tensors and modules rather than state dicts, so the adapter
 loads them with `weights_only=False`.
 
+CoPS uses the settings of the official `shell/test.sh`: CLIP `ViT-L/14@336px` at
+518 pixels with DPAM at layer 24, prompt depth/context 8/12/4, a 6-vector
+prototype bank, feature layer 24 only, and seed 0. Its weights are committed to
+the repository, so cloning it is the download; the MVTec target uses the
+VisA-trained `epoch_10` and the VisA target the MVTec-trained `epoch_5`. Its
+`gaussian_filter(sigma=4)` runs on the upsampled map, which the shared evaluator
+reproduces at `gaussian_sigma=4.0`.
+
+Three CoPS details are easy to get wrong. `get_fullsize_map` is called without
+its `mode` argument, so it falls through to the training branch and the map is
+upsampled with **nearest** interpolation rather than bilinear. The `alpha`/`beta`
+fusion weights (0.35/1.0 versus 0.26/0.9) and the neighbourhood kernel (3 versus
+5) branch on whether "visa" appears in the **test** dataset name, not the
+trained one. And the prototype distances are min-max normalized over the whole
+batch tensor, which only matches the official `batch_size 1` when images are
+scored individually, so the adapter scores one at a time. Its ICTS branch also
+samples 10 latents per image, so the RNG is reset to the seed before each image,
+exactly as for Bayes-PFL.
+
+MRAD uses the README quick start and the `test.py` defaults: CLIP
+`ViT-L/14@336px` at 518 pixels with DPAM at layer 24, prompt depth/context
+9/12/4, the `mrad-clip` variant, sigma 4, and fusion weight `k=0.7`. The image
+score combines the CLIP-side probability with the mean of the top 1 percent of
+map pixels, and because that top-k is taken on the blurred map the blur runs
+inside the adapter and the evaluator keeps `gaussian_sigma=0`. `feature_map_layer`
+defaults to `[0, 1, 2, 3]` and the loop keeps only indices at or above its last
+element, so exactly one projection layer contributes. Six Drive files are needed
+per run - one checkpoint per target plus the image and patch memory banks for
+each source dataset - and all are checksum-verified.
+
+MRAD's memory banks deserve a note, because a retrieval model is exactly the
+shape of method that breaks a matched protocol. They do not: `test.py` loads
+them with `load_cache=True` before the test loop and nothing writes to them while
+images are scored, so a prediction never depends on which images preceded it.
+The banks are built from the dataset that is not being evaluated, which is what
+makes the protocol zero-shot.
+
+WinCLIP uses `eval_WinCLIP.py` at its defaults: the `ViT-B-16-plus-240` backbone
+with `laion400m_e32` weights, 240-pixel inputs, window scales (2, 3), a
+400-pixel output grid, and seed 111. It is **training-free**, so there is no
+checkpoint at all beyond the backbone, which open_clip downloads on first use.
+The image score is the maximum of the map, exactly as `metric_cal` computes it,
+and the official Gaussian filter is commented out, so `gaussian_sigma=0`.
+
+Two WinCLIP properties are reproduced deliberately rather than simplified. With
+`k_shot` at zero the visual gallery stays empty, so the `textual_visual` fusion
+evaluates `1 / (1/t + 1/t)`, i.e. **half** the textual map; that halving is
+monotonic and cannot move AUROC, but the frozen thresholds are calibrated on
+absolute values, so it matters here. And WinCLIP is a 240-pixel model while the
+cohort arrives at 518 pixels, the grid the perturbations are defined on: the
+adapter performs the official bicubic resize down to 240 itself, which means the
+L-infinity budget applies at 518 and is attenuated by that downsample. That is a
+property of evaluating a 240-pixel model against a 518-pixel perturbation, and
+`runtime_metadata` records both sizes.
+
 Batch size is an execution-only setting and may be reduced for Kaggle without
 changing model outputs.
 
@@ -291,16 +346,14 @@ For AA-CLIP, install with `python -m pip install -e ".[aaclip]"`, start from
 `configs/adaclip.example.json`; its `checkpoint` accepts either a local path or
 one of the released names `visa_clinicdb`, `mvtec_colondb`, or `all`, and a
 name is downloaded into `download_root` and verified against a pinned sha256.
-FAPrompt, Crane, APRIL-GAN, FB-CLIP, Tipsomaly, VCP-CLIP, FiLo, Bayes-PFL, and
-AF-CLIP follow the same shape through `".[faprompt]"`, `".[crane]"`,
-`".[aprilgan]"`, `".[fbclip]"`, `".[tipsomaly]"`, `".[vcpclip]"`, `".[filo]"`,
-`".[bayespfl]"`, and `".[afclip]"` with the matching
-`configs/<model>.example.json`. The FAPrompt, FB-CLIP, VCP-CLIP, and Bayes-PFL
-extras pull `gdown` because those weights are Drive-only; if Drive rate-limits a
-download, fetch the `.pth` files by hand and pass their paths as `checkpoint`.
-FiLo takes its weights from HuggingFace instead, and its extra carries Grounding
-DINO's own dependencies. AF-CLIP needs no download beyond the OpenAI backbone,
-since its weights are committed to the repository. These extras install model runtime libraries without
+Every other adapter follows the same shape: install `".[<model>]"` and start
+from the matching `configs/<model>.example.json`. The FAPrompt, FB-CLIP,
+VCP-CLIP, Bayes-PFL, and MRAD extras pull `gdown` because those weights are
+Drive-only; if Drive rate-limits a download, fetch the files by hand and pass
+their paths. FiLo takes its weights from HuggingFace instead, and its extra
+carries Grounding DINO's own dependencies. AF-CLIP and CoPS need no download
+beyond the OpenAI backbone, since their weights are committed to their
+repositories, and WinCLIP needs no checkpoint at all. These extras install model runtime libraries without
 replacing the environment's PyTorch with an old repository pin. The AA-CLIP extra also includes `ipdb` and `regex`, which
 the official repository imports from `model/`, `forward_utils.py`, and its
 tokenizer but omits from its own `requirements.txt`.
@@ -311,8 +364,8 @@ repository and released checkpoints. Target-specific paths are configured under
 
 For Kaggle, use the `notebooks/kaggle_<model>.ipynb` matching the adapter
 (`anomalyclip`, `aaclip`, `adaclip`, `faprompt`, `crane`, `aprilgan`, `fbclip`,
-`tipsomaly`, `vcpclip`, `filo`, `bayespfl`, or `afclip`), enable GPU and
-Internet, and attach only:
+`tipsomaly`, `vcpclip`, `filo`, `bayespfl`, `afclip`, `cops`, `mrad`, or
+`winclip`), enable GPU and Internet, and attach only:
 
 - MVTec AD;
 - VisA;

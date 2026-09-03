@@ -13,5 +13,8 @@ from . import vcpclip as _vcpclip  # noqa: F401
 from . import filo as _filo  # noqa: F401
 from . import bayespfl as _bayespfl  # noqa: F401
 from . import afclip as _afclip  # noqa: F401
+from . import cops as _cops  # noqa: F401
+from . import mrad as _mrad  # noqa: F401
+from . import winclip as _winclip  # noqa: F401
 
 __all__ = ["ModelAdapter", "adapter_names", "create_adapter", "register_adapter"]
