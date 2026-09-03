@@ -250,8 +250,12 @@ class AprilGANFewShotAdapter(AprilGANAdapter):
     clean cohort and frozen for the adversarial pass.
 
     The official selection is ``torch.randint(0, n, (k,))`` under ``--seed 42``,
-    which samples **with replacement**, so a shot may legitimately repeat. That
-    is reproduced rather than corrected, and the drawn file names are recorded.
+    which samples **with replacement**, so a shot may legitimately repeat. The
+    draw itself is not reproducible from outside: the official indices address a
+    file list in ``os.listdir`` order and advance one global RNG across the
+    categories in meta.json order. The adapter keeps the with-replacement draw,
+    seeds it freshly per category over the sorted training images, and records
+    the file names it used.
     """
 
     name = "aprilgan_fewshot"

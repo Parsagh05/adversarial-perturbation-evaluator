@@ -25,6 +25,17 @@ ZERO_SHOT_CHECKPOINT = {
 }
 
 
+def _soft_score(
+    vision: torch.Tensor, text: torch.Tensor, temperature
+) -> torch.Tensor:
+    """test.py's ``calc_soft_score``: softmax of the similarity **divided** by
+    the TIPS temperature. train.py optimizes the learnable prompts under the same
+    division, and the upstream TIPS demo applies it the same way, so the
+    direction is not optional: multiplying instead flattens every softmax."""
+
+    return ((vision @ text.T) / temperature).softmax(dim=-1)
+
+
 def _import_official_repository(repository: str | Path):
     root = Path(repository).expanduser().resolve()
     required = (
@@ -180,7 +191,9 @@ class TipsomalyAdapter(ModelAdapter):
             # The official loop reports two image scores, one per TIPS CLS token.
             "cls_token_index": self.cls_token_index,
             "reported_image_scores": 2,
+            # calc_soft_score divides the similarity by this value.
             "temperature": float(temperature),
+            "temperature_applied_as": "divisor",
             "epoch": int(epoch),
             "seed": int(seed),
             "checkpoint": checkpoint_path.name,
@@ -228,12 +241,10 @@ class TipsomalyAdapter(ModelAdapter):
                 # prompts score the map.
                 cls_text = fixed if self.decoupled_prompt else self._learnable_text
                 seg_text = self._learnable_text
-                score = (
-                    self._temperature * features[self.cls_token_index] @ cls_text.T
-                ).softmax(dim=-1).squeeze(dim=1)
-                patch = (
-                    self._temperature * features[2] @ seg_text.T
-                ).softmax(dim=-1)
+                score = _soft_score(
+                    features[self.cls_token_index], cls_text, self._temperature
+                ).squeeze(dim=1)
+                patch = _soft_score(features[2], seg_text, self._temperature)
                 if self.aggregate_local2global:
                     score = score + torch.max(patch, dim=1)[0]
                 scores[index] = float(score.reshape(-1)[1])

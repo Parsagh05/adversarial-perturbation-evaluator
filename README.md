@@ -95,7 +95,12 @@ operating points, not deployment calibration.
 AnomalyCLIP uses the official `ViT-L/14@336px` path, 518-pixel inputs, seed
 111, prompt depth/context values 9/12/4, DPAM layer 20, feature levels
 6/12/18/24, temperature 0.07, and Gaussian sigma 4. MVTec and VisA use their
-corresponding released AnomalyCLIP checkpoints.
+corresponding released AnomalyCLIP checkpoints. One official ambiguity is worth
+knowing: the repository's `test.sh` (and `train.sh`) pass `--features_list 24`,
+while the argparse default, `test_one_example.sh`, the paper and the author's
+own reply in issue #33 all give 6/12/18/24. The adapter follows the latter. The
+choice touches only the anomaly map - the sum of four layer maps versus layer 24
+alone - and never the image score.
 
 AA-CLIP uses the official `ViT-L-14-336` OpenAI checkpoint, 518-pixel inputs,
 seed 111, residual weights 0.1/0.1, text/image adaptation depths 3/6, levels
@@ -179,8 +184,11 @@ TIPS is trained **without image normalization** (`create_transforms_tips` uses
 mean 0 and std 1), so the adapter leaves inputs in `[0, 1]`. Its
 `regrid_upsample_smooth` bilinear-upsamples and then applies
 `gaussian_filter(sigma=4)`, which the shared evaluator reproduces at
-`gaussian_sigma=4.0`. The official loop reports two image scores, one per TIPS
-class token; `cls_token_index` (default 0) selects which one is evaluated.
+`gaussian_sigma=4.0`. Its `calc_soft_score` **divides** the image-text
+similarity by the TIPS temperature before the softmax, and `train.py` optimized
+the learnable prompts under that same division, so the adapter divides too. The
+official loop reports two image scores, one per TIPS class token;
+`cls_token_index` (default 0) selects which one is evaluated.
 Learned prompts ship in-repo under `workspaces/`, so cloning it is the download;
 the MVTec target uses `trained_on_visa_default` and the VisA target uses
 `trained_on_mvtec_default`.
@@ -353,8 +361,11 @@ than unified:
   repeat with five repeats averaged. There is no canonical selection, so
   `shot_seed` pins it.
 - **APRIL-GAN** uses `torch.randint` under `--seed 42`, which samples **with
-  replacement**, so a shot may legitimately repeat. That is reproduced, not
-  corrected.
+  replacement**, so a shot may legitimately repeat. The draw is kept, but the
+  exact official selection cannot be reproduced from outside: its indices
+  address an `os.listdir`-ordered file list and advance one global RNG across
+  categories, so the adapter seeds a fresh draw per category over the sorted
+  training images.
 
 Whichever protocol applies, the drawn file names land in `runtime_metadata`
 under `reference_images`, so a result always records the exact reference set.

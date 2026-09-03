@@ -106,3 +106,22 @@ def test_adapters_report_an_incomplete_repository(tmp_path):
     ):
         with pytest.raises(FileNotFoundError, match="repository is incomplete"):
             create_adapter(name, repository=str(tmp_path), target_dataset="mvtec", **extra)
+
+
+def test_tipsomaly_divides_by_the_tips_temperature():
+    """test.py's calc_soft_score is softmax((v @ t.T) / temp), and train.py
+    optimized the learnable prompts under that same division, so the direction
+    is part of the released model. Multiplying instead was a real bug."""
+    import torch
+
+    from fpeval.adapters.tipsomaly import _soft_score
+
+    torch.manual_seed(0)
+    vision = torch.nn.functional.normalize(torch.randn(1, 5, 8), dim=-1)
+    text = torch.nn.functional.normalize(torch.randn(2, 8), dim=-1)
+    temperature = 0.01
+    official = torch.softmax((vision @ text.permute(1, 0)) / temperature, dim=-1)
+    assert torch.allclose(_soft_score(vision, text, temperature), official)
+    # The multiplied form is not the same function, so the test is not vacuous.
+    multiplied = torch.softmax(temperature * vision @ text.T, dim=-1)
+    assert not torch.allclose(official, multiplied)
