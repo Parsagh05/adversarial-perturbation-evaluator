@@ -110,6 +110,30 @@ inctrl = [
   "timm>=0.9",
   "torchvision>=0.15",
 ]
+univad = [
+  # Training-free, but heavy: models/ vendors CLIP, SAM-HQ and Grounding DINO,
+  # models/dinov2 is a submodule, and the two segmentation checkpoints are
+  # downloaded and checksum-verified into pretrained_ckpts/. GroundingDINO pulls
+  # addict, yapf, transformers and pycocotools; UniVAD.py's MULTI gate refines
+  # its clustering heatmaps with pydensecrf, which builds from source.
+  "addict>=2.4",
+  "einops>=0.6",
+  "ftfy>=6.0",
+  "kornia>=0.7",
+  "matplotlib>=3.6",
+  "opencv-python>=4.8",
+  "pycocotools>=2.0.6",
+  "pydensecrf @ git+https://github.com/lucasb-eyer/pydensecrf.git",
+  "PyYAML>=6.0",
+  "regex>=2023.0",
+  "scikit-image>=0.20",
+  "scikit-learn>=1.2",
+  "supervision>=0.16",
+  "timm>=0.9",
+  "torchvision>=0.15",
+  "transformers>=4.30",
+  "yapf>=0.40",
+]
 winclip = [
   # WinCLIP is training-free; open_clip downloads the laion400m backbone.
   "ftfy>=6.0",

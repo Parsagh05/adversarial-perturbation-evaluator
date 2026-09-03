@@ -11,7 +11,7 @@ ZERO_SHOT = {
 }
 FEW_SHOT = {
     "winclip_fewshot", "afclip_fewshot", "aprilgan_fewshot",
-    "subspacead", "inpformer", "fade", "inctrl",
+    "subspacead", "inpformer", "fade", "inctrl", "univad",
 }
 
 

@@ -7,8 +7,8 @@ fixed `evaluation_test_indices.csv` are always authoritative.
 
 The target adapters are AnomalyCLIP, AA-CLIP, AdaCLIP, FAPrompt, Crane,
 APRIL-GAN, FB-CLIP, Tipsomaly, VCP-CLIP, FiLo, Bayes-PFL, AF-CLIP, CoPS, MRAD
-and WinCLIP, plus few-shot SubspaceAD, INP-Former, FADE and InCTRL and few-shot
-variants of WinCLIP, AF-CLIP and APRIL-GAN. The shared evaluator owns attack
+and WinCLIP, plus few-shot SubspaceAD, INP-Former, FADE, InCTRL and UniVAD and
+few-shot variants of WinCLIP, AF-CLIP and APRIL-GAN. The shared evaluator owns attack
 discovery, fixed-cohort validation, RGB construction, metrics, thresholds, and
 result files; model-specific loading, preprocessing, prompting, and inference
 stay behind a small adapter interface.
@@ -437,6 +437,51 @@ with `reshape(b, 3, 225, -1)` from a layer-major tensor, which only lines up whe
 `b == 1`, so the adapter scores one image at a time as AdaCLIP and VCP-CLIP do
 for the same reason.
 
+**UniVAD** follows `test.sh` at its defaults - `--image_size 448 --k_shot 1
+--round 0` - and UniVAD.py's own fixed settings: CLIP `ViT-L-14-336` with OpenAI
+weights at layers 6/12/18/24, DINOv2-giant, DINO ViT-S/8 for the clustering
+heatmaps, Grounding DINO SwinT-OGC and SAM-HQ ViT-H for component segmentation,
+and the per-category thresholds in `configs/class_histogram/<category>.yaml`. It
+is training-free - every weight is a public backbone - and `round` picks the k
+normal images by position in the sorted training split, exactly as
+`range(round, round + k_shot)` does. The gate it selects from the reference masks
+(TEXTURE, SINGLE or MULTI) decides which branches run and is recorded per
+category in `runtime_metadata`. `test_univad.py` builds a `GaussianBlur(3, 4.0)`
+and never applies it, so `gaussian_sigma` stays at the evaluator's default.
+
+Three things separate it from every other adapter here.
+
+**Cost.** `segment_components.py` precomputes the component masks offline and
+`forward` looks them up by file path. Reusing those would mean the mask always
+came from the *clean* image, so the attack could never reach Contextual Component
+Clustering - one of the three parts of the method - and UniVAD would look robust
+for a reason that is an artifact of the harness rather than a property of the
+model. The adapter therefore runs Grounding DINO and SAM-HQ on the image actually
+being scored. That is the right thing to measure and it is expensive: a SAM-HQ
+ViT-H encode plus a Grounding DINO pass per image, on top of the three to five
+backbones `forward` already runs. It has not been timed on this project's
+hardware, but it is the slowest adapter here by a wide margin - time a small
+`max_conditions` run before committing to a sweep.
+
+**Resolution.** The official masks are segmented from the original-resolution
+file. The perturbation is only defined on the evaluation grid, so these are
+segmented at 448; `runtime_metadata` records both under
+`segmentation_resolution`.
+
+**Determinism.** The MULTI gate's setup fits `KMeans(init="k-means++")` with no
+`random_state` inside a `while` loop, so the reference side would otherwise
+differ run to run. The adapter seeds each successive attempt from `kmeans_seed`,
+which keeps a rerun reproducible while still letting the loop advance - the same
+fix AdaCLIP's HSF clustering needed.
+
+The official code addresses everything relatively and round-trips masks through
+`./masks` and `./heat_masks` for every image, so the adapter runs with the
+repository as its working directory and materializes the reference images under
+`<repository>/data`, where `setup` reopens them for the MULTI gate. The UniVAD
+checkout is therefore **writable state**, not a read-only dependency, and it
+needs `--recurse-submodules` plus `pip install -e .` inside
+`models/GroundingDINO`.
+
 Two of the three change more than the map. AF-CLIP's `detect_forward` stops
 being the zero-shot branch and returns `memory + alpha * segmentation` for both
 the map and the image score, which is where its otherwise-dead `alpha` of 0.1
@@ -484,7 +529,11 @@ beyond the OpenAI backbone, since their weights are committed to their
 repositories, and WinCLIP and FADE need no checkpoint at all - FADE's extra
 pulls `gem-torch`, which wraps open_clip. InCTRL's extra pulls `gdown` for its
 two Drive archives and `iopath`, which its vendored `open_clip/utils/env.py`
-builds a PathManager from. These extras install model runtime libraries without
+builds a PathManager from. UniVAD's extra is the heaviest: it carries Grounding
+DINO's dependencies and `pydensecrf`, which builds from a git source, and its two
+segmentation checkpoints (662 MB and 2.40 GB) are downloaded into the
+repository's `pretrained_ckpts/` and checksum-verified by
+`fpeval.adapters.univad.fetch_pretrained`. These extras install model runtime libraries without
 replacing the environment's PyTorch with an old repository pin. The AA-CLIP extra also includes `ipdb` and `regex`, which
 the official repository imports from `model/`, `forward_utils.py`, and its
 tokenizer but omits from its own `requirements.txt`.

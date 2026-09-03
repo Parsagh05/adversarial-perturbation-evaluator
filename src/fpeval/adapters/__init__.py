@@ -20,5 +20,6 @@ from . import subspacead as _subspacead  # noqa: F401
 from . import inpformer as _inpformer  # noqa: F401
 from . import fade as _fade  # noqa: F401
 from . import inctrl as _inctrl  # noqa: F401
+from . import univad as _univad  # noqa: F401
 
 __all__ = ["ModelAdapter", "adapter_names", "create_adapter", "register_adapter"]
