@@ -86,6 +86,30 @@ subspacead = [
   "torchvision>=0.15",
   "transformers>=4.40",
 ]
+fade = [
+  # Training-free: gem-torch wraps open_clip, which downloads the laion400m
+  # backbone. utils/text_model.py imports xgboost at module scope even though
+  # the default "average" model never touches it.
+  "ftfy>=6.0",
+  "gem-torch>=1.0.1",
+  "open_clip_torch>=2.20",
+  "opencv-python>=4.8",
+  "regex>=2023.0",
+  "scikit-learn>=1.2",
+  "torchvision>=0.15",
+  "xgboost>=2.0",
+]
+inctrl = [
+  # Weights and few-shot prompts are Drive-only, so gdown fetches them.
+  # open_clip/utils/env.py builds its PathManager from iopath.
+  "ftfy>=6.0",
+  "gdown>=5.0",
+  "iopath>=0.1.9",
+  "regex>=2023.0",
+  "scikit-learn>=1.2",
+  "timm>=0.9",
+  "torchvision>=0.15",
+]
 winclip = [
   # WinCLIP is training-free; open_clip downloads the laion400m backbone.
   "ftfy>=6.0",

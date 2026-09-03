@@ -7,8 +7,8 @@ fixed `evaluation_test_indices.csv` are always authoritative.
 
 The target adapters are AnomalyCLIP, AA-CLIP, AdaCLIP, FAPrompt, Crane,
 APRIL-GAN, FB-CLIP, Tipsomaly, VCP-CLIP, FiLo, Bayes-PFL, AF-CLIP, CoPS, MRAD
-and WinCLIP, plus few-shot SubspaceAD and INP-Former and few-shot variants of
-WinCLIP, AF-CLIP and APRIL-GAN. The shared evaluator owns attack
+and WinCLIP, plus few-shot SubspaceAD, INP-Former, FADE and InCTRL and few-shot
+variants of WinCLIP, AF-CLIP and APRIL-GAN. The shared evaluator owns attack
 discovery, fixed-cohort validation, RGB construction, metrics, thresholds, and
 result files; model-specific loading, preprocessing, prompting, and inference
 stay behind a small adapter interface.
@@ -389,6 +389,54 @@ checksum-pinned) to fetch. That also means there is no cross-dataset variant. No
 the outer border of the 518-pixel cohort image, so a perturbation placed there
 never reaches the model - `runtime_metadata` records both sizes.
 
+**FADE** follows `scripts/run_fade.py` at its defaults, the same settings its
+`--experiment-name` spells out (`cm_both_sm_both/img_size_448/1shot`): a
+GEM-wrapped `ViT-B/16-plus-240` with `laion400m_e31` weights, language **and**
+vision guidance for both classification and segmentation, CLIP features for
+language classification at 240 pixels, GEM features for everything else, and
+segmentation run at 240, 448 and 896 pixels then averaged onto the 56x56 grid of
+the largest. The image score is the mean of the language score and the maximum
+of the vision map taken **before** fusion, so it is not recoverable from the
+returned map and is computed alongside it; the map is
+`0.15 * language + 0.85 * vision`, the vision half first multiplied by 3.5. It is
+training-free, so the only download is the open_clip checkpoint and the k-shot
+reference is a 1-NN patch memory bank scored by `0.5 * (1 - cosine)`. Two
+details are reproduced rather than tidied: the script clips the fused map,
+quantizes it to `uint8` and only then resizes it to 448, so the published numbers
+come from a 256-level map, and GEM's `encode_text` wraps every prompt once more
+in "a photo of a", which the adapter keeps because it is what produced those
+numbers. `--normalize-segmentations` is off by default, so no cohort statistic
+enters a prediction. The 896-pixel pass is 3137 tokens, so the adapter scores one
+image at a time exactly as the official `batch_size=1` loop does, and it is
+noticeably slower than the other few-shot adapters.
+
+**InCTRL** follows `test.py` and `engine_test.py`: the `ViT-B-16-plus-240`
+configuration wrapped in the repository's `InCTRL` module, 240-pixel inputs,
+patch tokens from layers 7, 9 and 11, and the released `checkpoint.pyth` for the
+chosen shot count. It is a **generalist** detector - trained on one dataset and
+applied to the others - so the model that scores MVTec is the one trained on
+VisA and vice versa; `train_dataset` defaults to that pairing and is recorded.
+Both the 2.32 GB model archive and the roughly 30 MB sample-prompt archive are
+pinned by Drive file id and sha256, and the k normal prompts are the
+repository's own published `<category>.pt` tensors, so the shot selection is the
+paper's exactly rather than a re-drawn sample. Shots are 2, 4 and 8.
+
+**InCTRL publishes no pixel-level results.** `engine_test.py` reports only
+`roc_auc_score` and `average_precision_score` over image scores, and `forward`
+returns two image-level numbers. It does compute a per-patch residual internally
+- `patch_ref_map`, the mean over the three layers of `0.5 * (1 - cosine)` to the
+nearest normal patch - and half the final image score is precisely that map's
+maximum. The adapter exposes that 15x15 map as the localization output,
+recovering it exactly through a forward hook on `diff_head` rather than editing
+the official code. It is the model's own map and it is tied to the model's own
+score, but it is not a published result: **InCTRL's pixel AUROC, pixel F1 and
+AUPRO here have no paper number to be compared against, while its image-level
+metrics do.** `runtime_metadata` records this as `map_is_published_result:
+false`. One more reproduction note: the official forward reshapes patch features
+with `reshape(b, 3, 225, -1)` from a layer-major tensor, which only lines up when
+`b == 1`, so the adapter scores one image at a time as AdaCLIP and VCP-CLIP do
+for the same reason.
+
 Two of the three change more than the map. AF-CLIP's `detect_forward` stops
 being the zero-shot branch and returns `memory + alpha * segmentation` for both
 the map and the image score, which is where its otherwise-dead `alpha` of 0.1
@@ -433,7 +481,10 @@ Drive-only; if Drive rate-limits a download, fetch the files by hand and pass
 their paths. FiLo takes its weights from HuggingFace instead, and its extra
 carries Grounding DINO's own dependencies. AF-CLIP and CoPS need no download
 beyond the OpenAI backbone, since their weights are committed to their
-repositories, and WinCLIP needs no checkpoint at all. These extras install model runtime libraries without
+repositories, and WinCLIP and FADE need no checkpoint at all - FADE's extra
+pulls `gem-torch`, which wraps open_clip. InCTRL's extra pulls `gdown` for its
+two Drive archives and `iopath`, which its vendored `open_clip/utils/env.py`
+builds a PathManager from. These extras install model runtime libraries without
 replacing the environment's PyTorch with an old repository pin. The AA-CLIP extra also includes `ipdb` and `regex`, which
 the official repository imports from `model/`, `forward_utils.py`, and its
 tokenizer but omits from its own `requirements.txt`.
