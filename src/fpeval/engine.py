@@ -133,7 +133,7 @@ def _postprocess_predictions(
     map_maxs = np.asarray([item.max() for item in maps], dtype=np.float32)
     if reference_samples is None or reference_predictions is None:
         processed = adapter.postprocess_image_scores(
-            scores, map_mins, map_maxs, categories
+            scores, map_mins, map_maxs, categories, maps=processed_maps
         )
     else:
         reference_scores = np.asarray(
@@ -162,6 +162,8 @@ def _postprocess_predictions(
                 [item.max() for item in reference_maps], dtype=np.float32
             ),
             reference_categories=[sample.category for sample in reference_samples],
+            maps=processed_maps,
+            reference_maps=reference_maps,
         )
     processed = np.asarray(processed, dtype=np.float32)
     if processed.shape != (len(samples),) or not np.isfinite(processed).all():

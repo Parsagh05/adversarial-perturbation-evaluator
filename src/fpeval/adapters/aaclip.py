@@ -222,6 +222,8 @@ class AACLIPAdapter(ModelAdapter):
         map_mins: np.ndarray,
         map_maxs: np.ndarray,
         categories: Sequence[str],
+        *,
+        maps: np.ndarray | None = None,
     ) -> np.ndarray:
         return self.postprocess_image_scores_with_reference(
             scores,
@@ -245,6 +247,8 @@ class AACLIPAdapter(ModelAdapter):
         reference_map_mins: np.ndarray,
         reference_map_maxs: np.ndarray,
         reference_categories: Sequence[str],
+        maps: np.ndarray | None = None,
+        reference_maps: np.ndarray | None = None,
     ) -> np.ndarray:
         """Match official category scoring, fitted only on clean references."""
 

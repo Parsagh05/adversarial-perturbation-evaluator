@@ -14,6 +14,8 @@ def test_kaggle_notebook_code_cells_compile_and_clone_evaluator():
         Path("notebooks/kaggle_tipsomaly.ipynb"),
         Path("notebooks/kaggle_vcpclip.ipynb"),
         Path("notebooks/kaggle_filo.ipynb"),
+        Path("notebooks/kaggle_bayespfl.ipynb"),
+        Path("notebooks/kaggle_afclip.ipynb"),
     ):
         notebook = json.loads(path.read_text(encoding="utf-8"))
         source = "\n".join(
@@ -36,6 +38,7 @@ def test_every_adapter_ships_a_config_notebook_and_script():
     canonical = {
         "anomalyclip", "aaclip", "adaclip", "faprompt", "crane",
         "aprilgan", "fbclip", "tipsomaly", "vcpclip", "filo",
+        "bayespfl", "afclip",
     }
     assert canonical <= set(adapter_names())
     for model in sorted(canonical):

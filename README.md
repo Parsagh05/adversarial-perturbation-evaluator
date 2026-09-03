@@ -6,8 +6,8 @@ It does not generate or optimize attacks. The perturbation manifest and the
 fixed `evaluation_test_indices.csv` are always authoritative.
 
 The target adapters are AnomalyCLIP, AA-CLIP, AdaCLIP, FAPrompt, Crane,
-APRIL-GAN, FB-CLIP, Tipsomaly, VCP-CLIP, and FiLo. The shared evaluator owns
-attack
+APRIL-GAN, FB-CLIP, Tipsomaly, VCP-CLIP, FiLo, Bayes-PFL, and AF-CLIP. The
+shared evaluator owns attack
 discovery, fixed-cohort validation, RGB construction, metrics, thresholds, and
 result files; model-specific loading, preprocessing, prompting, and inference
 stay behind a small adapter interface.
@@ -228,6 +228,48 @@ PyTorch implementation the same module already uses on CPU; `runtime_metadata`
 records which path ran. FiLo scores one image at a time whatever `batch_size` is
 set to, because Grounding DINO picks a position word per image.
 
+Bayes-PFL uses the settings of the official `test.sh`: `ViT-L-14-336` on the
+pinned OpenAI `ViT-L-14-336px.pt` backbone at 518 pixels, features 6/12/18/24, a
+prompt bank of 3 prompts with 5 context and 5 state tokens, 10 planar flows and
+10 Monte Carlo samples, and seed 333. That gives 30 prompt draws per image.
+`calcuate_metric_pixel` blurs the maps at sigma 8 and does **not** normalize
+them, so the shared evaluator keeps `gaussian_sigma=8.0`. The image score fuses
+two per-category min-max normalized parts at 0.5/0.5: the Monte Carlo averaged
+text probability, and the mean of the unblurred map's top-k pixels, where k is 20
+for the fine-grained VisA categories (`capsules`, `cashew`, `chewinggum`,
+`macaroni1`, `macaroni2`, `pipe_fryum`, `screw`) and 2000 otherwise. That
+normalization is fitted on the clean cohort and frozen for the adversarial pass.
+The MVTec target uses `train_visa` and the VisA target uses `train_mvtec`; both
+are Drive-hosted and checksum-verified.
+
+Two properties of Bayes-PFL need care under a matched clean-versus-adversarial
+protocol. Its prompt sampling is **stochastic**, so the adapter resets the RNG to
+the seed before each image; a given image then draws the same 30 prompts on both
+passes, where the official loop lets the RNG advance across the test set and
+would make the two passes incomparable. And `forward_ensemble` caches the
+image-agnostic state latents from the first test image it ever sees and reuses
+them for the rest of the run; that cache is deliberately left alone, so the
+latents are fitted on clean data and frozen for the adversarial pass. Its
+image-score softmax is also taken over the flattened batch, which is only correct
+for a batch of one, so the adapter scores one image at a time whatever
+`batch_size` is set to.
+
+AF-CLIP uses the zero-shot rows of the official `test.sh` and its argparse
+defaults: CLIP `ViT-L/14@336px` at 518 pixels, feature layers 6/12/18/24 each
+aggregated over 1x1, 3x3 and 5x5 Gaussian neighbourhoods, a 12-token learned
+state prompt in front of the fixed `without defect.` / `with defect.` pair, the
+trained adaptor on the patch tokens, and seed 122. The zero-shot branch leaves
+`memorybank` unset, so `detect_forward` reduces to `detect_forward_seg` and the
+`alpha` flag never applies; the adapter refuses to run if the memory bank is
+somehow populated. Scores and maps are used raw — the official loop performs no
+normalization anywhere — and its bilinear upsample plus `gaussian_filter(sigma=4)`
+is exactly what the shared evaluator does, so `gaussian_sigma=4.0`. The weights
+are committed to the repository as `<source>_prompt.pt` and `<source>_adaptor.pt`
+named after the dataset they were trained on, so cloning it is the download; the
+MVTec target uses the VisA-trained pair and the VisA target the MVTec-trained
+one. They are pickled tensors and modules rather than state dicts, so the adapter
+loads them with `weights_only=False`.
+
 Batch size is an execution-only setting and may be reduced for Kaggle without
 changing model outputs.
 
@@ -249,14 +291,16 @@ For AA-CLIP, install with `python -m pip install -e ".[aaclip]"`, start from
 `configs/adaclip.example.json`; its `checkpoint` accepts either a local path or
 one of the released names `visa_clinicdb`, `mvtec_colondb`, or `all`, and a
 name is downloaded into `download_root` and verified against a pinned sha256.
-FAPrompt, Crane, APRIL-GAN, FB-CLIP, Tipsomaly, VCP-CLIP, and FiLo follow the
-same shape through `".[faprompt]"`, `".[crane]"`, `".[aprilgan]"`,
-`".[fbclip]"`, `".[tipsomaly]"`, `".[vcpclip]"`, and `".[filo]"` with the
-matching `configs/<model>.example.json`. The FAPrompt, FB-CLIP, and VCP-CLIP
+FAPrompt, Crane, APRIL-GAN, FB-CLIP, Tipsomaly, VCP-CLIP, FiLo, Bayes-PFL, and
+AF-CLIP follow the same shape through `".[faprompt]"`, `".[crane]"`,
+`".[aprilgan]"`, `".[fbclip]"`, `".[tipsomaly]"`, `".[vcpclip]"`, `".[filo]"`,
+`".[bayespfl]"`, and `".[afclip]"` with the matching
+`configs/<model>.example.json`. The FAPrompt, FB-CLIP, VCP-CLIP, and Bayes-PFL
 extras pull `gdown` because those weights are Drive-only; if Drive rate-limits a
 download, fetch the `.pth` files by hand and pass their paths as `checkpoint`.
 FiLo takes its weights from HuggingFace instead, and its extra carries Grounding
-DINO's own dependencies. These extras install model runtime libraries without
+DINO's own dependencies. AF-CLIP needs no download beyond the OpenAI backbone,
+since its weights are committed to the repository. These extras install model runtime libraries without
 replacing the environment's PyTorch with an old repository pin. The AA-CLIP extra also includes `ipdb` and `regex`, which
 the official repository imports from `model/`, `forward_utils.py`, and its
 tokenizer but omits from its own `requirements.txt`.
@@ -267,7 +311,8 @@ repository and released checkpoints. Target-specific paths are configured under
 
 For Kaggle, use the `notebooks/kaggle_<model>.ipynb` matching the adapter
 (`anomalyclip`, `aaclip`, `adaclip`, `faprompt`, `crane`, `aprilgan`, `fbclip`,
-`tipsomaly`, `vcpclip`, or `filo`), enable GPU and Internet, and attach only:
+`tipsomaly`, `vcpclip`, `filo`, `bayespfl`, or `afclip`), enable GPU and
+Internet, and attach only:
 
 - MVTec AD;
 - VisA;
@@ -453,6 +498,14 @@ Implement `ModelAdapter` in `src/fpeval/adapters/<name>.py`, decorate it with
 adapter receives `[B,3,H,W]` RGB tensors in `[0,1]` plus category names and
 returns one image score and one 2-D anomaly map per image. No attack, dataset,
 threshold, or metric code needs to change.
+
+Models whose official evaluation normalizes or fuses over a whole cohort
+override the `postprocess_*` hooks instead of doing it inside `predict`. The
+`*_with_reference` variants receive the frozen clean predictions, which is how a
+cohort statistic stays fitted on clean data through the adversarial pass. The
+score hooks are handed `map_mins`, `map_maxs`, and the postprocessed `maps`
+themselves, so a model needing another map statistic — Bayes-PFL takes the mean
+of the top-k pixels — can compute it without a second inference pass.
 
 ## Development checks
 

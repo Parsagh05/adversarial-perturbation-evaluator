@@ -451,6 +451,8 @@ class VCPCLIPAdapter(ModelAdapter):
         map_mins: np.ndarray,
         map_maxs: np.ndarray,
         categories: Sequence[str],
+        *,
+        maps: np.ndarray | None = None,
     ) -> np.ndarray:
         del map_mins, map_maxs
         scores = np.asarray(scores, dtype=np.float32)
@@ -471,6 +473,8 @@ class VCPCLIPAdapter(ModelAdapter):
         reference_map_mins: np.ndarray,
         reference_map_maxs: np.ndarray,
         reference_categories: Sequence[str],
+        maps: np.ndarray | None = None,
+        reference_maps: np.ndarray | None = None,
     ) -> np.ndarray:
         del map_mins, map_maxs, reference_map_mins, reference_map_maxs
         scores = np.asarray(scores, dtype=np.float32)

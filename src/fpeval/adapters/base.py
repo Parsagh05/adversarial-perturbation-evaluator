@@ -32,10 +32,17 @@ class ModelAdapter(ABC):
         map_mins: np.ndarray,
         map_maxs: np.ndarray,
         categories: Sequence[str],
+        *,
+        maps: np.ndarray | None = None,
     ) -> np.ndarray:
-        """Apply optional clean-cohort image-score aggregation."""
+        """Apply optional clean-cohort image-score aggregation.
 
-        del map_mins, map_maxs, categories
+        ``maps`` carries the postprocessed cohort maps for models whose image
+        score needs a map statistic other than the min and max, such as the mean
+        of the top-k pixels.
+        """
+
+        del map_mins, map_maxs, categories, maps
         return np.asarray(scores, dtype=np.float32)
 
     def postprocess_image_scores_with_reference(
@@ -49,6 +56,8 @@ class ModelAdapter(ABC):
         reference_map_mins: np.ndarray,
         reference_map_maxs: np.ndarray,
         reference_categories: Sequence[str],
+        maps: np.ndarray | None = None,
+        reference_maps: np.ndarray | None = None,
     ) -> np.ndarray:
         """Postprocess using normalization fitted on frozen clean predictions."""
 
@@ -57,8 +66,11 @@ class ModelAdapter(ABC):
             reference_map_mins,
             reference_map_maxs,
             reference_categories,
+            reference_maps,
         )
-        return self.postprocess_image_scores(scores, map_mins, map_maxs, categories)
+        return self.postprocess_image_scores(
+            scores, map_mins, map_maxs, categories, maps=maps
+        )
 
     def postprocess_anomaly_maps(
         self, maps: np.ndarray, categories: Sequence[str]
