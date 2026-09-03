@@ -29,11 +29,13 @@ CHECKPOINTS = {
     ("visa", 2): ("inp_former_visa_2shot.pth", "1_vlO4OSQSze095ddhkkyRWCOA2IRVLia"),
     ("visa", 4): ("inp_former_visa_4shot.pth", "1MFZcRNwALdPPv1Wemk5_1WLq76BINdky"),
 }
-# sha256 of each released model.pth. A key that is absent here is downloaded
-# WITHOUT an integrity check, so fill the rest in before relying on them:
-#   python -c "import hashlib,sys;print(hashlib.sha256(open(sys.argv[1],'rb').read()).hexdigest())" <file>
+# sha256 of each released model.pth, all 620.50 MB.
 DIGESTS: dict[tuple[str, int], str] = {
+    ("mvtec", 1): "f7ffa7a40c0efb9395df1f44be5d674e8e094caa648114d2c32e1adc60dcb06f",
+    ("mvtec", 2): "3dad331d75716f0a5e34f8395c9dda7001181ec7e3572198e0a66e1e773e7afa",
     ("mvtec", 4): "518d7a57587583251313edf81dfd44abd79ffd86c50f9bb8620af3716b862667",
+    ("visa", 1): "f74693668bca625db36ac332fd4f014b6828e1086ebc6bc1d9182fd6d6b7d356",
+    ("visa", 2): "200c745529728f551e0ccfbff25934bc39d711d5dd513436a5f20c4d00b4c793",
     ("visa", 4): "930e80ceccb53c66d3db1dd0a4b3af0c435c6325b7da1e61e1dec563fa19834a",
 }
 
@@ -118,8 +120,8 @@ def resolve_checkpoint(
     )
     root.mkdir(parents=True, exist_ok=True)
     destination = root / filename
-    expected = DIGESTS.get(key)
-    if destination.is_file() and (expected is None or _sha256(destination) == expected):
+    expected = DIGESTS[key]
+    if destination.is_file() and _sha256(destination) == expected:
         return destination
     try:
         import gdown
@@ -135,14 +137,13 @@ def resolve_checkpoint(
             f"Google Drive did not return {filename}. Drive rate-limits popular "
             "files; retry later or download it manually and pass its path."
         )
-    if expected is not None:
-        actual = _sha256(temporary)
-        if actual != expected:
-            temporary.unlink(missing_ok=True)
-            raise ValueError(
-                f"INP-Former checksum mismatch for {filename}: expected "
-                f"{expected}, got {actual}"
-            )
+    actual = _sha256(temporary)
+    if actual != expected:
+        temporary.unlink(missing_ok=True)
+        raise ValueError(
+            f"INP-Former checksum mismatch for {filename}: expected "
+            f"{expected}, got {actual}"
+        )
     temporary.replace(destination)
     return destination
 

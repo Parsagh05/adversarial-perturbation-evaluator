@@ -146,15 +146,38 @@ def test_subspacead_follows_the_benchmark_script():
 
 
 def test_inpformer_releases_one_model_per_dataset_and_shot():
-    from fpeval.adapters.inpformer import CHECKPOINTS, SHOT_VALUES
+    from fpeval.adapters.inpformer import CHECKPOINTS, DIGESTS, SHOT_VALUES
 
     assert SHOT_VALUES == (1, 2, 4)
-    assert set(CHECKPOINTS) == {
+    expected = {
         (dataset, shot) for dataset in ("mvtec", "visa") for shot in SHOT_VALUES
     }
+    assert set(CHECKPOINTS) == expected
+    # Every released file is checksum-pinned; an unpinned key would download
+    # without an integrity check.
+    assert set(DIGESTS) == expected
     for filename, file_id in CHECKPOINTS.values():
         assert filename.endswith(".pth")
         assert len(file_id) > 20
+    for digest in DIGESTS.values():
+        assert len(digest) == 64 and int(digest, 16) >= 0
+
+
+def test_inpformer_rejects_a_corrupt_download(tmp_path, monkeypatch):
+    from fpeval.adapters import inpformer
+
+    gdown = pytest.importorskip("gdown")
+    filename, file_id = inpformer.CHECKPOINTS[("mvtec", 4)]
+
+    def write_wrong_bytes(*, id, output, quiet=True):
+        del id, quiet
+        with open(output, "wb") as handle:
+            handle.write(b"corrupt")
+
+    monkeypatch.setattr(gdown, "download", write_wrong_bytes)
+    with pytest.raises(ValueError, match="checksum mismatch"):
+        inpformer.resolve_checkpoint("mvtec", 4, download_root=tmp_path)
+    assert not (tmp_path / filename).exists()
 
 
 def test_inpformer_rejects_an_unreleased_shot_count(tmp_path):

@@ -384,8 +384,8 @@ prototypes, target layers 2-9 fused as two groups of four, and the
 INP-Former is the one few-shot adapter that needs **no runtime reference set**:
 its released weights were trained on k normal images per category of the target
 dataset, so the shots are baked into the checkpoint and `shot` selects which of
-the six released files (two datasets x 1/2/4 shots, ~620 MB each) to fetch. That
-also means there is no cross-dataset variant. Note that its centre crop discards
+the six released files (two datasets x 1/2/4 shots, 620.50 MB each, all
+checksum-pinned) to fetch. That also means there is no cross-dataset variant. Note that its centre crop discards
 the outer border of the 518-pixel cohort image, so a perturbation placed there
 never reaches the model - `runtime_metadata` records both sizes.
 
