@@ -110,6 +110,58 @@ inctrl = [
   "timm>=0.9",
   "torchvision>=0.15",
 ]
+craneplus = [
+  # The Crane+ row adds the D-Attention branch, whose dinov2_vitb14_reg backbone
+  # torch.hub pulls at load time; nothing else differs from the crane extra.
+  "ftfy>=6.0",
+  "regex>=2023.0",
+  "scikit-learn>=1.2",
+  "scipy>=1.10",
+  "tabulate>=0.9",
+  "torchvision>=0.15",
+]
+dictas = [
+  # Weights are Drive-only, so gdown fetches them. dataset.py rotates the screw
+  # support set with albumentations, and models/ pulls the rest.
+  "albumentations>=1.3",
+  "ftfy>=6.0",
+  "gdown>=5.0",
+  "opencv-python>=4.6",
+  "regex>=2023.0",
+  "scikit-learn>=1.2",
+  # gaussian_filter(axes=...) needs scipy 1.11.
+  "scipy>=1.11",
+  "timm>=0.9",
+  "torchvision>=0.15",
+]
+anovl = [
+  # Training-free: open_clip is vendored and downloads the laion400m backbone.
+  "ftfy>=6.0",
+  "kornia>=0.6",
+  "opencv-python>=4.6",
+  "regex>=2023.0",
+  "scikit-image>=0.19",
+  "scikit-learn>=1.2",
+  "timm>=0.9",
+  "torchvision>=0.15",
+]
+kagprompt = [
+  # Weights and the 4.8 GB ImageBind backbone are Drive-only, so gdown fetches
+  # them. ImageBind itself pulls pytorchvideo, torchaudio, iopath and timm, and
+  # openllama.py imports kornia for its rotations.
+  "einops>=0.6",
+  "ftfy>=6.0",
+  "gdown>=5.0",
+  "iopath>=0.1.9",
+  "kornia>=0.7",
+  "opencv-python>=4.8",
+  "pytorchvideo>=0.1.5",
+  "regex>=2022.10",
+  "scikit-learn>=1.2",
+  "timm>=0.9",
+  "torchaudio>=2.0",
+  "torchvision>=0.15",
+]
 univad = [
   # Training-free, but heavy: models/ vendors CLIP, SAM-HQ and Grounding DINO,
   # models/dinov2 is a submodule, and the two segmentation checkpoints are

@@ -7,8 +7,9 @@ fixed `evaluation_test_indices.csv` are always authoritative.
 
 The target adapters are AnomalyCLIP, AA-CLIP, AdaCLIP, FAPrompt, Crane,
 APRIL-GAN, FB-CLIP, Tipsomaly, VCP-CLIP, FiLo, Bayes-PFL, AF-CLIP, CoPS, MRAD
-and WinCLIP, plus few-shot SubspaceAD, INP-Former, FADE, InCTRL and UniVAD and
-few-shot variants of WinCLIP, AF-CLIP and APRIL-GAN. The shared evaluator owns attack
+and WinCLIP, plus Crane+ and AnoVL, and few-shot SubspaceAD, INP-Former, FADE,
+InCTRL, UniVAD, DictAS and KAG-Prompt and few-shot variants of WinCLIP, AF-CLIP
+and APRIL-GAN. The shared evaluator owns attack
 discovery, fixed-cohort validation, RGB construction, metrics, thresholds, and
 result files; model-specific loading, preprocessing, prompting, and inference
 stay behind a small adapter interface.
@@ -153,7 +154,7 @@ prompt depth/context values 9/12/4, `replace_with_EAttn` to layer 20 with
 `qq+kk+vv` attention, and score-base pooling at alpha 0.5. This is the base
 `Crane` row of the paper's Table 1, which `test.sh` runs with
 `--dino_model none --soft_mean True --features_list 6 12 18 24 --epoch 5`; the
-`Crane+` variant additionally loads DINOv2 and is not covered. Crane ships its
+`Crane+` row is the separate `craneplus` adapter described below. Crane ships its
 released checkpoints inside the repository, so cloning it is the download. The
 MVTec target uses `trained_on_visa_crane` and the VisA target uses
 `trained_on_mvtec_crane`, exactly as `test.sh` does.
@@ -278,6 +279,38 @@ named after the dataset they were trained on, so cloning it is the download; the
 MVTec target uses the VisA-trained pair and the VisA target the MVTec-trained
 one. They are pickled tensors and modules rather than state dicts, so the adapter
 loads them with `weights_only=False`.
+
+**Crane+** is the second row of the same Crane table, which test.sh runs as
+`--epoch 5 --dino_model dinov2 --features_list 24`. It differs from the base
+Crane row in three ways, two of them easy to miss: it adds the D-Attention branch
+(a `dinov2_vitb14_reg` backbone pulled from torch.hub, which sees the same
+perturbed pixels through an un-normalize/re-normalize step), it reads **one**
+feature level instead of four, and it leaves `--soft_mean` at its argparse
+default of **False** - the base row passes `--soft_mean True` explicitly, so the
+per-layer maps are averaged as logits and the softmax is taken once at the end.
+Its weights ship in the repository as `trained_on_*_cranep/epoch_5.pth`.
+
+**AnoVL** follows `test_zero_shot.sh`: a `ViT-B-16-plus-240` backbone with
+`laion400m_e32` weights at 240 pixels, token layers 3/6/9/12, the architecture
+surgery that swaps the last blocks for v-v attention, and `--adapter True
+--epoch 5`. It is training-free: there is no released checkpoint, and its
+projection `LinearLayer` turns out to apply CLIP's own `ln_post @ proj` rather
+than a learned head.
+
+Its unusual property is a **per-image test-time adaptation**. For each image the
+class's adapter is re-initialized from scratch and trained for five AdamW steps
+at 1e-3 on an entropy objective computed from that image alone. Because the reset
+happens per image, nothing carries from one image to the next and the matched
+clean-versus-adversarial protocol still holds; but the reset, the 22-view `aug`
+draw and the adapter's own `mask_aug` all consume the global RNG, which would
+otherwise make a prediction depend on how many images preceded it, so the adapter
+reseeds before each image. `test_zero_shot.sh` runs MVTec through `vl_test.py`
+and VisA through `vis_test.py`, which differ only in the adapter module they
+build (`TextAdapter` vs `Adapter`) and the seed (111 vs 42), so the target
+selects both. One indexing note: the transformer appends **two** tensors per
+requested layer - the v-v branch and the original - so four layers give eight
+entries and the scripts' `if layer != 6: continue` selects the v-v branch of
+layer 12. At four entries it reads like a dead loop, which it is not.
 
 CoPS uses the settings of the official `shell/test.sh`: CLIP `ViT-L/14@336px` at
 518 pixels with DPAM at layer 24, prompt depth/context 8/12/4, a 6-vector
@@ -495,6 +528,54 @@ checkout is therefore **writable state**, not a read-only dependency, and it
 needs `--recurse-submodules` plus `pip install -e .` inside
 `models/GroundingDINO`.
 
+**DictAS** follows test.sh and the argparse defaults: the repository's own CLIP
+on the pinned OpenAI `ViT-L-14-336px.pt` at **336 pixels**, the released
+`train_visa.pth` / `train_mvtec.pth` dictionary, and `TEST_For_BESTSEGMENTATION`
+left at its default `True`. That default decides three things through
+`BESTSEGMENTATION`: the feature levels are **6/12 on MVTec** but 6/12/18/24 on
+VisA, `scale_list` stays (1, 3), and the map blur is sigma 6. The blur runs
+before both the pixel metrics and the map maximum that feeds the image score, so
+the adapter applies it and `gaussian_sigma` is 0. The score is
+`0.2 * text probability + 0.8 * map maximum`, each min-max normalized per
+category over the cohort - `calcuate_metric_pixel` forces that 0.2 for MVTec and
+VisA whatever `--alpha` says - and both normalizations are fitted on clean data
+and frozen.
+
+Its k-shot selection is **the published one**, which makes it unusual here. The
+repository pins the selection in `fix_few_path`, but as paths into the authors'
+own converted `mvisa` tree (`mvtec_000091.bmp` and so on), whose file names do
+not exist in the original MVTec/VisA downloads. The repository also ships
+`meta_mvtec.json` and `meta_visa.json`, which list every converted name in
+per-class order, so each pinned file resolves to a position in the sorted normal
+training split; those positions are what the adapter stores, and the test suite
+re-derives them from the repository rather than trusting the table. One category
+is special: `screw` at k <= 4 has its support set rotated through nine angles,
+which is reproduced (on the 518-pixel cohort tensor, since that is the grid the
+perturbation lives on).
+
+**KAG-Prompt** follows `code/test_mvtec.py` and `code/test_visa.py`: an
+**ImageBind-huge** visual encoder with the released `train_on_*.pt` heads (a
+linear decoder, an adapter, the kernel-aware graph module and MMCI), 224-pixel
+inputs, feature levels 6/12/18/24 and the fusion weight `r = 0.1`. Despite the
+`OpenLLAMAPEFTModel` class name inherited from AnomalyGPT, **no language model is
+loaded** - the constructor builds ImageBind and the small heads and nothing else.
+The image score is `0.1 * cls_logit + 0.9 * mean(top-30 map pixels)`, taken per
+image, so no cohort statistic enters a prediction.
+
+Two properties needed care. The official model loads its images **from disk by
+path** inside `extract_multimodal_feature`; handing it file paths here would
+bypass the perturbation entirely, so the adapter serves the evaluated tensors
+through the repository's own `load_and_transform_vision_data` entry point, keyed
+by a sentinel path, leaving the official code unmodified. And its reference
+branch contains `if 'mvtec' in 'normal_img_paths'` - a comparison against the
+*literal string*, which is always false - so the rotation-augmented path is dead
+for every dataset; that is reproduced rather than corrected and recorded as
+`rotation_augmented_references: false`. The selection is positional and
+reproducible: MVTec asks for files `round + i` and falls back to the last k when
+they do not exist (only `toothbrush`, whose train split has 60 images), while
+VisA takes a contiguous window at `round * 4`. The ImageBind backbone is a 4.8 GB
+Drive download.
+
 Two of the three change more than the map. AF-CLIP's `detect_forward` stops
 being the zero-shot branch and returns `memory + alpha * segmentation` for both
 the map and the image score, which is where its otherwise-dead `alpha` of 0.1
@@ -546,7 +627,12 @@ builds a PathManager from. UniVAD's extra is the heaviest: it carries Grounding
 DINO's dependencies and `pydensecrf`, which builds from a git source, and its two
 segmentation checkpoints (662 MB and 2.40 GB) are downloaded into the
 repository's `pretrained_ckpts/` and checksum-verified by
-`fpeval.adapters.univad.fetch_pretrained`. These extras install model runtime libraries without
+`fpeval.adapters.univad.fetch_pretrained`. Crane+ reuses Crane's committed
+weights and needs no download beyond the torch.hub DINOv2; AnoVL needs no
+checkpoint at all; DictAS pulls `gdown` for its two Drive files and
+`albumentations` for the `screw` rotations; and KAG-Prompt pulls `gdown` for its
+heads plus the 4.8 GB ImageBind backbone, along with ImageBind's own
+`pytorchvideo`, `torchaudio` and `iopath`. These extras install model runtime libraries without
 replacing the environment's PyTorch with an old repository pin. The AA-CLIP extra also includes `ipdb` and `regex`, which
 the official repository imports from `model/`, `forward_utils.py`, and its
 tokenizer but omits from its own `requirements.txt`.

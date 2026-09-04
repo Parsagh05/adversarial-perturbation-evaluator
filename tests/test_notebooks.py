@@ -8,10 +8,12 @@ ZERO_SHOT = {
     "anomalyclip", "aaclip", "adaclip", "faprompt", "crane",
     "aprilgan", "fbclip", "tipsomaly", "vcpclip", "filo",
     "bayespfl", "afclip", "cops", "mrad", "winclip",
+    "craneplus", "anovl",
 }
 FEW_SHOT = {
     "winclip_fewshot", "afclip_fewshot", "aprilgan_fewshot",
     "subspacead", "inpformer", "fade", "inctrl", "univad",
+    "dictas", "kagprompt",
 }
 
 

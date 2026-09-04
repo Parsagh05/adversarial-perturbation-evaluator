@@ -23,6 +23,11 @@ ZERO_SHOT_CHECKPOINT = {
     "mvtec": "trained_on_visa_crane",
     "visa": "trained_on_mvtec_crane",
 }
+# The Crane+ row of the same table uses its own committed weights.
+CRANE_PLUS_CHECKPOINT = {
+    "mvtec": "trained_on_visa_cranep",
+    "visa": "trained_on_mvtec_cranep",
+}
 
 
 def _import_official_repository(repository: str | Path):
@@ -90,8 +95,7 @@ class CraneAdapter(ModelAdapter):
     """Official Crane zero-shot inference for MVTec AD and VisA.
 
     This is the base ``Crane`` row of the paper's Table 1, which test.sh runs
-    with ``--dino_model none``. The ``Crane+`` variant additionally loads DINOv2
-    and is not covered here.
+    with ``--dino_model none``. ``CranePlusAdapter`` below is the ``Crane+`` row.
     """
 
     name = "crane"
@@ -114,11 +118,17 @@ class CraneAdapter(ModelAdapter):
         attn_type: str = "qq+kk+vv",
         soft_mean: bool = True,
         use_scorebase_pooling: bool = True,
+        dino_model: str = "none",
         seed: int = 111,
     ) -> None:
         target_key = target_dataset.strip().lower()
         if target_key not in ZERO_SHOT_CHECKPOINT:
             raise ValueError("Crane target_dataset must be 'mvtec' or 'visa'")
+        if dino_model not in {"none", "dinov2"}:
+            raise ValueError(
+                "Crane's released rows use --dino_model none (Crane) or dinov2 "
+                "(Crane+); the dino and sam branches have no released weights here."
+            )
         if image_size != 518:
             raise ValueError("Official Crane evaluation uses image_size=518")
         if backbone != "ViT-L/14@336px":
@@ -146,7 +156,7 @@ class CraneAdapter(ModelAdapter):
             features_list=list(self.features),
             attn_type=attn_type,
             both_eattn_dattn=True,
-            dino_model="none",
+            dino_model=dino_model,
             train_with_img_cls_prob=0.0,
             train_with_img_cls_type="pad_suffix",
             use_scorebase_pooling=self.use_scorebase_pooling,
@@ -164,6 +174,9 @@ class CraneAdapter(ModelAdapter):
         self._args = others
         model, _ = models.load(backbone, device=str(self.device), design_details=design)
         model.visual.replace_with_EAttn(to_layer=self.attention_layer, type=attn_type)
+        # test.py calls use_DAttn between the two, and only when dino_model is set.
+        if dino_model != "none":
+            model.use_DAttn(dino_model)
         model = utils.turn_gradient_off(model)
 
         learner = prompt_ensemble.PromptLearner(model.to("cpu"), design)
@@ -202,7 +215,7 @@ class CraneAdapter(ModelAdapter):
             "compound_context_length": int(compound_context_length),
             "self_cor_attn_layers": self.attention_layer,
             "attn_type": attn_type,
-            "dino_model": "none",
+            "dino_model": dino_model,
             "soft_mean": self.soft_mean,
             "use_scorebase_pooling": self.use_scorebase_pooling,
             "temperature": 0.07,
@@ -277,3 +290,56 @@ class CraneAdapter(ModelAdapter):
         self._pooling = None
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
+
+
+@register_adapter("crane-plus")
+@register_adapter("craneplus")
+class CranePlusAdapter(CraneAdapter):
+    """Official Crane+ zero-shot inference for MVTec AD and VisA.
+
+    The ``Crane+`` row of test.sh, which differs from the base ``Crane`` row in
+    three ways: it adds the D-Attention branch (``--dino_model dinov2``, a
+    ``dinov2_vitb14_reg`` backbone pulled from torch.hub), it reads a single
+    feature level (``--features_list 24``) instead of four, and it leaves
+    ``--soft_mean`` at its argparse default of **False**, so the per-layer maps
+    are averaged as logits and the softmax is taken once at the end rather than
+    per layer. Both differences are easy to miss because the base row passes
+    ``--soft_mean True`` explicitly.
+
+    The weights are the repository's own ``trained_on_*_cranep/epoch_5.pth``, so
+    cloning it is the download, and the cross-dataset pairing is unchanged.
+
+    ``encode_image`` un-normalizes the CLIP-normalized tensor and re-normalizes it
+    with ImageNet statistics for DINOv2, so both towers see the same perturbed
+    pixels. At 518 pixels the DINOv2 patch grid is 37x37, matching CLIP's.
+    """
+
+    name = "craneplus"
+
+    def __init__(
+        self,
+        *,
+        features: Sequence[int] = (24,),
+        soft_mean: bool = False,
+        dino_model: str = "dinov2",
+        checkpoint: str | None = None,
+        **kwargs,
+    ) -> None:
+        target = str(kwargs["target_dataset"]).strip().lower()
+        if target not in CRANE_PLUS_CHECKPOINT:
+            raise ValueError("Crane+ target_dataset must be 'mvtec' or 'visa'")
+        super().__init__(
+            features=features,
+            soft_mean=soft_mean,
+            dino_model=dino_model,
+            checkpoint=checkpoint or CRANE_PLUS_CHECKPOINT[target],
+            **kwargs,
+        )
+        self._runtime_metadata.update(
+            {
+                "adapter": self.name,
+                "official_entrypoint_defaults": "Crane/test.sh (Crane+ row)",
+                "variant": "crane+",
+                "dino_backbone": "dinov2_vitb14_reg",
+            }
+        )
