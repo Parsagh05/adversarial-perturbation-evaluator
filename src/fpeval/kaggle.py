@@ -170,3 +170,47 @@ def inventory_attack_setups(attacks_root: str | Path) -> dict[str, dict[str, str
     if not inventory:
         raise ValueError(f"No frozen or learnable attack setups found below {setups}")
     return inventory
+
+
+def download_kaggle_dataset(
+    reference: str, *, download_root: str | Path | None = None
+) -> Path:
+    """Return a local directory holding the unpacked public Kaggle dataset.
+
+    Checkpoints that live on Kaggle rather than Drive or HuggingFace are fetched
+    through this one entry point so no adapter needs a manual download step. A
+    dataset already attached to a Kaggle session is preferred over re-fetching
+    it, which is both faster and works when the session has no network.
+
+    Off Kaggle, ``kagglehub`` needs credentials: either ``~/.kaggle/kaggle.json``
+    or the ``KAGGLE_USERNAME`` and ``KAGGLE_KEY`` environment variables.
+    """
+
+    slug = reference.split("/")[-1]
+    mounted = Path("/kaggle/input")
+    if mounted.is_dir():
+        attached = mounted / slug
+        if attached.is_dir():
+            return attached
+    if download_root:
+        cached = Path(download_root).expanduser().resolve() / slug
+        if cached.is_dir() and any(cached.rglob("*")):
+            return cached
+    try:
+        import kagglehub
+    except ImportError as error:  # pragma: no cover - environment dependent
+        raise ImportError(
+            f"Fetching {reference} needs kagglehub. Install it, attach the "
+            f"dataset to the session, or pass the checkpoint paths explicitly."
+        ) from error
+    return Path(kagglehub.dataset_download(reference))
+
+
+def find_kaggle_files(root: str | Path, pattern: str) -> list[Path]:
+    """Every file below ``root`` matching a glob, in a stable order.
+
+    Kaggle unpacks a dataset under a version directory whose name is not part of
+    the reference, so callers search rather than assume a layout.
+    """
+
+    return sorted({path.resolve() for path in Path(root).rglob(pattern) if path.is_file()})

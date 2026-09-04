@@ -8,8 +8,8 @@ fixed `evaluation_test_indices.csv` are always authoritative.
 The target adapters are AnomalyCLIP, AA-CLIP, AdaCLIP, FAPrompt, Crane,
 APRIL-GAN, FB-CLIP, Tipsomaly, VCP-CLIP, FiLo, Bayes-PFL, AF-CLIP, CoPS, MRAD
 and WinCLIP, plus Crane+ and AnoVL, and few-shot SubspaceAD, INP-Former, FADE,
-InCTRL, UniVAD, DictAS and KAG-Prompt and few-shot variants of WinCLIP, AF-CLIP
-and APRIL-GAN. The shared evaluator owns attack
+InCTRL, UniVAD, DictAS, KAG-Prompt and PromptAD and few-shot variants of
+WinCLIP, AF-CLIP and APRIL-GAN. The shared evaluator owns attack
 discovery, fixed-cohort validation, RGB construction, metrics, thresholds, and
 result files; model-specific loading, preprocessing, prompting, and inference
 stay behind a small adapter interface.
@@ -110,7 +110,10 @@ performed inside the official similarity-map function, so the shared evaluator
 sets `gaussian_sigma=0` for AA-CLIP. Official category-level min/max score
 aggregation is fitted on clean predictions and frozen before adversarial
 evaluation. For zero-shot evaluation, the MVTec target uses `TrainOnVisA`
-weights and the VisA target uses `TrainOnMVTec` weights.
+weights and the VisA target uses `TrainOnMVTec` weights. The authors publish no
+adapters, so the ones trained for this project are mirrored on Kaggle and
+resolved automatically - `image_checkpoint` and `text_checkpoint` are optional
+and only needed to override the lookup.
 
 AdaCLIP uses the official `ViT-L-14-336` OpenAI backbone, 518-pixel inputs,
 seed 111, prompting depth/length 4/5, prompting type `SD`, prompting branch
@@ -576,6 +579,35 @@ they do not exist (only `toothbrush`, whose train split has 60 images), while
 VisA takes a contiguous window at `round * 4`. The ImageBind backbone is a
 4.80 GB Drive download, checksum-pinned like the rest.
 
+**PromptAD** follows train_cls.py / train_seg.py and their test counterparts at
+the argparse defaults: a `ViT-B-16-plus-240` backbone with `laion400m_e32`
+weights at **240 pixels** in fp16, 4 normal context tokens, 1 anomaly context
+token, 4 learnable anomaly suffixes, and a 400-pixel output grid. Its
+`model(data, 'seg')` blurs at sigma 4 internally, so `gaussian_sigma` is 0.
+
+**The image score and the anomaly map come from different checkpoints**, and
+that is the official protocol rather than a shortcut: `test_cls.py` loads a CLS
+checkpoint and reports image metrics, `test_seg.py` loads a SEG checkpoint and
+reports pixel metrics. The adapter runs both per category, so each half
+reproduces the number the paper reports for it, at the cost of two backbone
+passes per image.
+
+A checkpoint holds only three tensors - `feature_gallery1`, `feature_gallery2`
+and `text_features` - the k-shot memory bank and the learned text anchors. The
+prompt learner that produced them is not saved and inference never reads it,
+which is why the official test scripts load with `strict=False`. The reference
+images are therefore **baked into the checkpoint**, as with INP-Former, and none
+are drawn at runtime; the gallery is sized `k_shot * 15 * 15`, so a checkpoint
+only loads at the shot count it was trained for.
+
+Two caveats belong with any PromptAD number. The authors publish **no weights** -
+PromptAD trains prompts per class, per shot and per task - so these are
+checkpoints retrained for this project at seed 111 for 100 epochs, mirrored as a
+public Kaggle dataset. And the upstream training script selects the checkpoint on
+**best test AUROC over 100 epochs**, an oracle rule that inflates absolute
+numbers relative to methods selecting on validation or taking the final epoch;
+it is recorded as `checkpoint_selection_rule` so a comparison can account for it.
+
 Two of the three change more than the map. AF-CLIP's `detect_forward` stops
 being the zero-shot branch and returns `memory + alpha * segmentation` for both
 the map and the image score, which is where its otherwise-dead `alpha` of 0.1
@@ -632,7 +664,16 @@ weights and needs no download beyond the torch.hub DINOv2; AnoVL needs no
 checkpoint at all; DictAS pulls `gdown` for its two Drive files and
 `albumentations` for the `screw` rotations; and KAG-Prompt pulls `gdown` for its
 heads plus the 4.8 GB ImageBind backbone, along with ImageBind's own
-`pytorchvideo`, `torchaudio` and `iopath`. These extras install model runtime libraries without
+`pytorchvideo`, `torchaudio` and `iopath`.
+
+Two adapters take their weights from Kaggle rather than Drive or HuggingFace, and
+both fetch them without any manual step. AA-CLIP publishes no adapters, and
+PromptAD publishes no prompts at all, so the checkpoints trained for this project
+are mirrored as public Kaggle datasets and resolved by
+`fpeval.kaggle.download_kaggle_dataset`. A dataset already attached to a Kaggle
+session is used in place; otherwise `kagglehub` downloads it, which off Kaggle
+needs `~/.kaggle/kaggle.json` or `KAGGLE_USERNAME` / `KAGGLE_KEY`. Passing an
+explicit checkpoint path still overrides the lookup entirely. These extras install model runtime libraries without
 replacing the environment's PyTorch with an old repository pin. The AA-CLIP extra also includes `ipdb` and `regex`, which
 the official repository imports from `model/`, `forward_utils.py`, and its
 tokenizer but omits from its own `requirements.txt`.

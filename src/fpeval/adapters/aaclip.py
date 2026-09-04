@@ -11,12 +11,48 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 
+from ..kaggle import download_kaggle_dataset, find_kaggle_files
 from .base import ModelAdapter, register_adapter
 
 
 CLIP_MEAN = (0.48145466, 0.4578275, 0.40821073)
 CLIP_STD = (0.26862954, 0.26130258, 0.27577711)
 OFFICIAL_DATASET_NAMES = {"mvtec": "MVTec", "visa": "VisA"}
+
+# AA-CLIP publishes no weights, so the adapters trained for this project are
+# mirrored as a public Kaggle dataset and fetched automatically.
+KAGGLE_DATASET = "parsagh1383/aa-clip-checkpoints-main"
+# test.py evaluates a dataset with the adapters trained on the other one.
+ZERO_SHOT_TRAINING = {"mvtec": "TrainOnVisA", "visa": "TrainOnMVTec"}
+
+
+def resolve_checkpoints(
+    target_dataset: str, *, download_root: str | None = None
+) -> tuple[Path, Path | None]:
+    """Return the image adapter, and the text adapter when one ships with it.
+
+    The released layout keys each run by the dataset it trained on, so the
+    training name is matched against the path rather than a fixed filename.
+    """
+
+    key = str(target_dataset).strip().lower()
+    if key not in ZERO_SHOT_TRAINING:
+        raise ValueError("AA-CLIP target_dataset must be 'mvtec' or 'visa'")
+    training = ZERO_SHOT_TRAINING[key]
+    root = download_kaggle_dataset(KAGGLE_DATASET, download_root=download_root)
+    matches = [
+        path
+        for path in find_kaggle_files(root, "image_adapter*.pth")
+        if training.lower() in str(path).lower()
+    ]
+    if len(matches) != 1:
+        raise RuntimeError(
+            f"Expected exactly one {training} image adapter below {root}, found "
+            f"{[str(path) for path in matches]}"
+        )
+    image = matches[0]
+    text = image.parent / "text_adapter.pth"
+    return image, text if text.is_file() else None
 
 
 def _import_official_repository(repository: str | Path):
@@ -82,9 +118,10 @@ class AACLIPAdapter(ModelAdapter):
         self,
         *,
         repository: str,
-        image_checkpoint: str,
         target_dataset: str,
+        image_checkpoint: str | None = None,
         text_checkpoint: str | None = None,
+        download_root: str | None = None,
         device: str = "cuda",
         image_size: int = 518,
         backbone: str = "ViT-L-14-336",
@@ -99,6 +136,12 @@ class AACLIPAdapter(ModelAdapter):
         target_key = target_dataset.strip().lower()
         if target_key not in OFFICIAL_DATASET_NAMES:
             raise ValueError("AA-CLIP target_dataset must be 'mvtec' or 'visa'")
+        if image_checkpoint is None:
+            image_checkpoint, resolved_text = resolve_checkpoints(
+                target_key, download_root=download_root
+            )
+            if text_checkpoint is None:
+                text_checkpoint = resolved_text
         if image_size != 518:
             raise ValueError("Official AA-CLIP evaluation uses image_size=518")
         if backbone != "ViT-L-14-336":
@@ -123,6 +166,8 @@ class AACLIPAdapter(ModelAdapter):
             "industrial_blur_kernel": [7, 7],
             "industrial_blur_sigma": 1.0,
             "uses_text_adapter": text_checkpoint is not None,
+            "checkpoint_source": KAGGLE_DATASET,
+            "checkpoint_selection": ZERO_SHOT_TRAINING[target_key],
         }
         adapter_module, clip_module, forward_module, utils_module = (
             _import_official_repository(repository)
