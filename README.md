@@ -573,8 +573,8 @@ for every dataset; that is reproduced rather than corrected and recorded as
 `rotation_augmented_references: false`. The selection is positional and
 reproducible: MVTec asks for files `round + i` and falls back to the last k when
 they do not exist (only `toothbrush`, whose train split has 60 images), while
-VisA takes a contiguous window at `round * 4`. The ImageBind backbone is a 4.8 GB
-Drive download.
+VisA takes a contiguous window at `round * 4`. The ImageBind backbone is a
+4.80 GB Drive download, checksum-pinned like the rest.
 
 Two of the three change more than the map. AF-CLIP's `detect_forward` stops
 being the zero-shot branch and returns `memory + alpha * segmentation` for both

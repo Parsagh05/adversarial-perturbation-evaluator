@@ -185,6 +185,13 @@ def test_kagprompt_pins_its_released_files():
         assert len(digest) == 64 and int(digest, 16) >= 0
 
 
+def test_kagprompt_pins_the_imagebind_backbone():
+    assert kagprompt.IMAGEBIND[0] == "imagebind_huge.pth"
+    assert len(kagprompt.IMAGEBIND[1]) > 20
+    digest = kagprompt.IMAGEBIND_SHA256
+    assert digest is not None and len(digest) == 64 and int(digest, 16) >= 0
+
+
 def test_kagprompt_score_constants():
     assert kagprompt.FUSION_R == 0.1
     assert kagprompt.SCORE_TOP_K == 30

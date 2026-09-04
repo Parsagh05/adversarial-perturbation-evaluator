@@ -33,8 +33,10 @@ CHECKPOINTS = {
 }
 ZERO_SHOT_CHECKPOINT = {"mvtec": "train_on_visa", "visa": "train_on_mvtec"}
 IMAGEBIND = ("imagebind_huge.pth", "1jLpa_YCL_bOHtSZ1FpZygfQFHJOrWe71")
-# Filled in once the 4.8 GB ImageBind archive has been fetched and hashed.
-IMAGEBIND_SHA256: str | None = None
+# The 4.80 GB ImageBind-huge backbone, hashed from the downloaded file.
+IMAGEBIND_SHA256: str | None = (
+    "d6f6c22bedcc90708448d5d2fbb7b2db9c73f505dc89bd0b2e09b23af1b62157"
+)
 
 MODEL_IMAGE_SIZE = 224
 FEATURES = (6, 12, 18, 24)
