@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 import importlib
 from pathlib import Path
+import re
 import sys
 
 import numpy as np
@@ -76,6 +77,22 @@ def _import_official_repository(repository: str | Path):
     )
 
 
+def _mentions_shot(path: Path, k_shot: int) -> bool:
+    """Whether a path identifies itself as belonging to one shot count.
+
+    The released package wraps each configuration in its own directory and keeps
+    PromptAD's ``<dataset>/k_<shot>/checkpoint/`` tree inside it, so the shot
+    count shows up either as a ``k_<n>`` component or as a ``<n>shot`` token in
+    the wrapper name. Accepting both keeps the lookup working whether the inner
+    tree survived packaging or was flattened.
+    """
+
+    if f"k_{k_shot}" in {part.lower() for part in path.parts}:
+        return True
+    token = re.compile(rf"(?:^|[^0-9]){k_shot}[ _-]?shot(?:$|[^0-9])")
+    return any(token.search(part.lower()) for part in path.parts)
+
+
 def resolve_checkpoint(
     target_dataset: str,
     k_shot: int,
@@ -88,10 +105,13 @@ def resolve_checkpoint(
 ) -> Path:
     """Return one released checkpoint, fetching the Kaggle dataset if needed.
 
-    The released tree keeps PromptAD's own layout,
-    ``<dataset>/k_<shot>/checkpoint/<TASK>-Seed_<seed>-<class>-check_point.pt``,
-    under a wrapper directory whose name depends on how Kaggle unpacked it, so
-    the file is searched for rather than addressed by a fixed path.
+    The file name is PromptAD's own,
+    ``<TASK>-Seed_<seed>-<class>-check_point.pt``, but the directories above it
+    depend on how the package was assembled, so the file is searched for and
+    then narrowed by dataset and shot count rather than addressed by a fixed
+    path. The narrowing only has to separate the six configurations that share a
+    file name; it is applied in order and each step must leave the answer
+    unambiguous.
     """
 
     task = task.upper()
@@ -105,16 +125,21 @@ def resolve_checkpoint(
         else download_kaggle_dataset(KAGGLE_DATASET, download_root=download_root)
     )
     filename = CHECKPOINT_TEMPLATE.format(task=task, seed=int(seed), category=category)
-    shot_marker = f"k_{int(k_shot)}"
-    matches = [
-        path
-        for path in find_kaggle_files(root, filename)
-        if shot_marker in path.parts and str(target_dataset).lower() in str(path).lower()
-    ]
+    found = find_kaggle_files(root, filename)
+    if not found:
+        raise FileNotFoundError(
+            f"No {filename} below {root}. The released package keeps PromptAD's "
+            f"own <TASK>-Seed_<seed>-<class>-check_point.pt naming."
+        )
+    dataset = str(target_dataset).lower()
+    matches = [path for path in found if dataset in str(path).lower()]
+    if len(matches) > 1:
+        matches = [path for path in matches if _mentions_shot(path, int(k_shot))]
     if len(matches) != 1:
         raise FileNotFoundError(
-            f"Expected exactly one {filename} for {target_dataset} {shot_marker} "
-            f"below {root}, found {[str(path) for path in matches]}"
+            f"Expected exactly one {filename} for {target_dataset} at "
+            f"{k_shot}-shot below {root}, found "
+            f"{[str(path) for path in matches] or [str(path) for path in found]}"
         )
     return matches[0]
 

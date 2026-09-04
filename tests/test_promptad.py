@@ -67,25 +67,68 @@ def test_promptad_reports_an_incomplete_repository(tmp_path):
         promptad._import_official_repository(tmp_path)
 
 
-def test_promptad_resolves_a_checkpoint_from_a_local_tree(tmp_path):
-    """The released tree keeps PromptAD's own dataset/k_N/checkpoint layout."""
-    folder = tmp_path / "release" / "mvtec" / "k_2" / "checkpoint"
-    folder.mkdir(parents=True)
-    wanted = folder / "SEG-Seed_111-bottle-check_point.pt"
-    wanted.write_bytes(b"x")
-    # A same-named file for another shot count must not be picked up.
-    other = tmp_path / "release" / "mvtec" / "k_4" / "checkpoint"
-    other.mkdir(parents=True)
-    (other / "SEG-Seed_111-bottle-check_point.pt").write_bytes(b"x")
+def _build_release(root, *, nested):
+    """The six released configurations, as the Kaggle package lays them out.
 
-    found = promptad.resolve_checkpoint(
-        "mvtec", 2, "bottle", "SEG", checkpoint_root=str(tmp_path)
-    )
-    assert found == wanted.resolve()
-    with pytest.raises(FileNotFoundError, match="Expected exactly one"):
+    Every wrapper directory holds the same file names, so only the dataset and
+    shot count separate them - which is exactly what the resolver has to get
+    right. ``nested`` toggles between PromptAD's own
+    ``result/<dataset>/k_<n>/checkpoint`` tree and a flattened ``result/``.
+    """
+    for dataset, categories in (("mvtec", ["bottle", "cable"]), ("visa", ["candle"])):
+        for k_shot in promptad.SHOT_VALUES:
+            top = root / "PromptAD" / f"promptad_retrained_{dataset}_{k_shot}shot"
+            (top / "logs").mkdir(parents=True, exist_ok=True)
+            (top / "checkpoint_index.json").write_text("{}", encoding="utf-8")
+            base = (
+                top / "result" / dataset / f"k_{k_shot}" / "checkpoint"
+                if nested
+                else top / "result"
+            )
+            base.mkdir(parents=True, exist_ok=True)
+            for category in categories:
+                for task in promptad.TASKS:
+                    name = promptad.CHECKPOINT_TEMPLATE.format(
+                        task=task, seed=promptad.CHECKPOINT_SEED, category=category
+                    )
+                    (base / name).write_bytes(b"x")
+
+
+@pytest.mark.parametrize("nested", [True, False])
+def test_promptad_resolves_every_configuration_of_the_release(tmp_path, nested):
+    """All six configurations must resolve, under either packaging."""
+    _build_release(tmp_path, nested=nested)
+    for dataset, category in (("mvtec", "bottle"), ("visa", "candle")):
+        for k_shot in promptad.SHOT_VALUES:
+            for task in promptad.TASKS:
+                found = promptad.resolve_checkpoint(
+                    dataset, k_shot, category, task, checkpoint_root=str(tmp_path)
+                )
+                assert found.name == promptad.CHECKPOINT_TEMPLATE.format(
+                    task=task, seed=promptad.CHECKPOINT_SEED, category=category
+                )
+                # The wrapper directory names the configuration it belongs to,
+                # so a mixed-up shot or dataset would show up here.
+                assert f"{dataset}_{k_shot}shot" in str(found)
+
+
+def test_promptad_reports_a_class_it_has_no_checkpoint_for(tmp_path):
+    _build_release(tmp_path, nested=True)
+    with pytest.raises(FileNotFoundError, match="No SEG-Seed_111-nosuch"):
         promptad.resolve_checkpoint(
-            "mvtec", 1, "bottle", "SEG", checkpoint_root=str(tmp_path)
+            "mvtec", 1, "nosuch", "SEG", checkpoint_root=str(tmp_path)
         )
+
+
+def test_promptad_shot_marker_does_not_confuse_neighbouring_counts():
+    from pathlib import Path
+
+    assert promptad._mentions_shot(Path("a/k_1/b"), 1)
+    assert promptad._mentions_shot(Path("a/promptad_retrained_mvtec_1shot/b"), 1)
+    assert not promptad._mentions_shot(Path("a/k_1/b"), 2)
+    # A longer number must not match a shorter one.
+    assert not promptad._mentions_shot(Path("a/run_11shot/b"), 1)
+    assert not promptad._mentions_shot(Path("a/k_11/b"), 1)
 
 
 # ----------------------------------------------------------------- AA-CLIP ---
@@ -103,6 +146,25 @@ def test_aaclip_checkpoints_are_optional_and_cross_dataset():
     for target, training in aaclip.ZERO_SHOT_TRAINING.items():
         assert target not in training.lower()
     assert aaclip.KAGGLE_DATASET.count("/") == 1
+
+
+def test_aaclip_resolves_adapters_from_the_released_tree(tmp_path, monkeypatch):
+    """The released layout is AA-CLIP_Checkpoints/TrainOn{MVTec,VisA}/*.pth."""
+    for training in ("TrainOnMVTec", "TrainOnVisA"):
+        folder = tmp_path / "AA-CLIP_Checkpoints" / training
+        folder.mkdir(parents=True)
+        (folder / "image_adapter.pth").write_bytes(b"x")
+        (folder / "text_adapter.pth").write_bytes(b"x")
+    monkeypatch.setattr(aaclip, "download_kaggle_dataset", lambda *a, **k: tmp_path)
+
+    image, text = aaclip.resolve_checkpoints("mvtec")
+    assert image.parent.name == "TrainOnVisA"
+    assert text == image.parent / "text_adapter.pth"
+    image, text = aaclip.resolve_checkpoints("visa")
+    assert image.parent.name == "TrainOnMVTec"
+    assert text == image.parent / "text_adapter.pth"
+    with pytest.raises(ValueError, match="mvtec"):
+        aaclip.resolve_checkpoints("btad")
 
 
 def test_aaclip_resolves_adapters_from_a_local_tree(tmp_path, monkeypatch):

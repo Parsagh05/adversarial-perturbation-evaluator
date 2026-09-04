@@ -673,7 +673,15 @@ are mirrored as public Kaggle datasets and resolved by
 `fpeval.kaggle.download_kaggle_dataset`. A dataset already attached to a Kaggle
 session is used in place; otherwise `kagglehub` downloads it, which off Kaggle
 needs `~/.kaggle/kaggle.json` or `KAGGLE_USERNAME` / `KAGGLE_KEY`. Passing an
-explicit checkpoint path still overrides the lookup entirely. These extras install model runtime libraries without
+explicit checkpoint path still overrides the lookup entirely.
+
+Neither lookup assumes a fixed path. AA-CLIP's package is
+`AA-CLIP_Checkpoints/TrainOn{MVTec,VisA}/{image,text}_adapter.pth`, and
+PromptAD's wraps each of its six dataset-and-shot configurations in its own
+directory around PromptAD's own `result/` tree. Both resolvers therefore search
+for the file and narrow by the training name or by dataset and shot count, so
+they keep working whether the inner tree survived packaging or was flattened;
+the tests build both shapes. These extras install model runtime libraries without
 replacing the environment's PyTorch with an old repository pin. The AA-CLIP extra also includes `ipdb` and `regex`, which
 the official repository imports from `model/`, `forward_utils.py`, and its
 tokenizer but omits from its own `requirements.txt`.
