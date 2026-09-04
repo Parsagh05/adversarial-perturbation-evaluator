@@ -403,6 +403,29 @@ than unified:
   categories, so the adapter seeds a fresh draw per category over the sorted
   training images.
 
+### Which shot counts each few-shot model can run
+
+Nine of the eleven few-shot adapters cover the usual 1/2/4 sweep. Two do not,
+and in both cases that is a property of what the authors released rather than a
+gap in the adapter:
+
+| adapter | shot counts | why |
+| --- | --- | --- |
+| WinCLIP few-shot | **1, 5, 10** | `datasets/*.py` assert `k_shot in [0, 1, 5, 10]`, and the committed `selected_samples_per_run.txt` lists only those selections |
+| InCTRL | **2, 4, 8** | the released archives hold `checkpoints/{2,4,8}` and `<dataset>/{2,4,8}/<class>.pt` |
+| AF-CLIP, APRIL-GAN, SubspaceAD, INP-Former, FADE, UniVAD, DictAS, KAG-Prompt, PromptAD | 1, 2, 4 | released weights, pinned selections or a free memory bank at each count |
+
+So **no single k covers everything**: at k=1 InCTRL drops out, and at k=2 or 4
+WinCLIP does. A 1/2/4 table still holds both, just not at every column.
+
+The shipped configs and notebooks each sit at their own model's paper default,
+which is a mix of 1, 2 and 4 - deliberately, so a single run reproduces that
+model's published setting. **They are therefore not matched to each other**: set
+`K_SHOT` (or `SHOT` for INP-Former and InCTRL) explicitly when the point is a
+comparison across models rather than a reproduction. Every adapter records the
+count it used in `runtime_metadata`, so results stay attributable either way,
+and `tests/test_few_shot_counts.py` pins the table above.
+
 Whichever protocol applies, the drawn file names land in `runtime_metadata`
 under `reference_images`, so a result always records the exact reference set.
 
