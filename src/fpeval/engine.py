@@ -516,7 +516,8 @@ def _evaluate_condition(
     summary_rows: list[dict[str, Any]] = []
     for pixel_mode in config.pixel_threshold_modes:
         rows = [row for row in category_rows if row["pixel_threshold_mode"] == pixel_mode]
-        summary = {**base, "category": "__macro__", "pixel_threshold_mode": pixel_mode,
+        summary_category = rows[0]["category"] if len(rows) == 1 else "__macro__"
+        summary = {**base, "category": summary_category, "pixel_threshold_mode": pixel_mode,
                    "category_count": len(rows), "sample_count": sum(int(row["sample_count"]) for row in rows),
                    "attacked_count": sum(int(row["attacked_count"]) for row in rows)}
         metric_names = [

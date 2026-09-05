@@ -794,6 +794,11 @@ pixel diagnostics, shifts, and realized norms. Low-resolution prediction maps
 can optionally be saved as compressed NPZ files; full 518-pixel maps are used
 for metrics regardless.
 
+A summary over multiple target categories uses `category=__macro__`. A
+single-category summary uses the actual category name. Cross-dataset category
+details remain available in the standard `category_metrics.csv`, while their
+dataset-wide rows in `summary.csv` remain macro summaries.
+
 The consolidated model directory remains the authoritative full-run result.
 Samples are kept in their own consolidated directory, and both numerical
 results and samples also receive independent input-shaped separated trees.

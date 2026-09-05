@@ -75,6 +75,8 @@ def test_end_to_end_fixed_cohort(tmp_path):
         row = next(csv.DictReader(handle))
     assert row["setup_id"] == "steps500_eps2"
     assert row["prompt_mode"] == "frozen_prompt"
+    assert row["category"] == "bottle"
+    assert row["category_count"] == "1"
     assert float(row["clean_i_auroc"]) == 100.0
     with (output / "per_image.csv").open(newline="") as handle:
         images = list(csv.DictReader(handle))
