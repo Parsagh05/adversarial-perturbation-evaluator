@@ -1,4 +1,5 @@
 import hashlib
+import inspect
 
 import pytest
 import torch
@@ -155,3 +156,8 @@ def test_tipsomaly_accepts_official_batched_text_features():
     actual = _soft_score(vision, text, 0.01)
     assert actual.shape == (1, 5, 2)
     assert torch.allclose(actual, expected)
+
+
+def test_tipsomaly_defaults_to_the_paper_spatial_global_token():
+    signature = inspect.signature(tipsomaly.TipsomalyAdapter.__init__)
+    assert signature.parameters["cls_token_index"].default == 1

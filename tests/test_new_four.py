@@ -1,4 +1,5 @@
 import hashlib
+import inspect
 
 import pytest
 import torch
@@ -191,6 +192,23 @@ def test_anovl_predict_unconditionally_uses_the_official_weight_reset():
     source = inspect.getsource(anovl.AnoVLAdapter.predict)
     assert "module.apply(_official_weight_reset)" in source
     assert "if self._weight_reset" not in source
+
+
+def test_anovl_visa_tiling_and_recovery_match_the_official_overlap():
+    image = torch.arange(1 * 1 * 2 * 3, dtype=torch.float32).view(1, 1, 2, 3)
+    tiles, difference = anovl._image_tiling(image)
+    assert difference == 1
+    assert torch.equal(tiles[0], image[0, :, :, :2])
+    assert torch.equal(tiles[1], image[0, :, :, 1:])
+    assert torch.equal(anovl._image_recover(tiles, difference), image)
+
+
+def test_anovl_visa_path_uses_tiles_while_mvtec_keeps_augmentation():
+    source = inspect.getsource(anovl.AnoVLAdapter.predict)
+    assert 'self.target_dataset == "mvtec"' in source
+    assert "views = self._aug(image.cpu())" in source
+    assert "views, difference = _image_tiling(image)" in source
+    assert "anomaly = _image_recover(anomaly, difference)" in source
 
 
 def test_anovl_rejects_an_unknown_target(tmp_path):

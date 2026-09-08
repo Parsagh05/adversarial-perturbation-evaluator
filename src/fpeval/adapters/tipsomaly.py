@@ -124,7 +124,7 @@ class TipsomalyAdapter(ModelAdapter):
         d_deep_tokens: int = 0,
         decoupled_prompt: bool = True,
         aggregate_local2global: bool = True,
-        cls_token_index: int = 0,
+        cls_token_index: int = 1,
         seed: int = 111,
     ) -> None:
         target_key = target_dataset.strip().lower()

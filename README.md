@@ -192,7 +192,9 @@ mean 0 and std 1), so the adapter leaves inputs in `[0, 1]`. Its
 similarity by the TIPS temperature before the softmax, and `train.py` optimized
 the learnable prompts under that same division, so the adapter divides too. The
 official loop reports two image scores, one per TIPS class token;
-`cls_token_index` (default 0) selects which one is evaluated.
+`cls_token_index` defaults to 1, selecting TIPS's second (spatial) global token,
+which the paper uses in its final image-level score. Index 0 remains available
+for reproducing the object-centric-token ablation.
 Learned prompts ship in-repo under `workspaces/`, so cloning it is the download;
 the MVTec target uses `trained_on_visa_default` and the VisA target uses
 `trained_on_mvtec_default`.
@@ -301,16 +303,16 @@ projection `LinearLayer` turns out to apply CLIP's own `ln_post @ proj` rather
 than a learned head.
 
 Its unusual property is a **per-image test-time adaptation**. For each image the
-class's adapter is re-initialized from scratch and trained for five AdamW steps
-at 1e-3 on an entropy objective computed from that image alone. Because the reset
-happens per image, nothing carries from one image to the next and the matched
-clean-versus-adversarial protocol still holds; but the reset, the 22-view `aug`
-draw and the adapter's own `mask_aug` all consume the global RNG, which would
-otherwise make a prediction depend on how many images preceded it, so the adapter
-reseeds before each image. `test_zero_shot.sh` runs MVTec through `vl_test.py`
-and VisA through `vis_test.py`, which differ only in the adapter module they
-build (`TextAdapter` vs `Adapter`) and the seed (111 vs 42), so the target
-selects both. One indexing note: the transformer appends **two** tensors per
+class's adapter weights are re-initialized and trained for five AdamW steps at
+1e-3 on an entropy objective computed from that image alone. Matching the
+upstream scripts, the category optimizer (including its moment state) is retained
+while the Linear/Conv weights are reset. The evaluator reseeds before each image
+so the same image receives matching stochastic adaptation on clean and attacked
+passes. `test_zero_shot.sh` runs MVTec through `vl_test.py` with the 22-view
+`aug`, while VisA runs through `vis_test.py`, which uses two overlapping square
+tiles and blends their maps back together. The scripts also select different
+adapter modules (`TextAdapter` vs `Adapter`) and seeds (111 vs 42). One indexing
+note: the transformer appends **two** tensors per
 requested layer - the v-v branch and the original - so four layers give eight
 entries and the scripts' `if layer != 6: continue` selects the v-v branch of
 layer 12. At four entries it reads like a dead loop, which it is not.
