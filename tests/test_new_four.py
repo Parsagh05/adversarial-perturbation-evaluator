@@ -1,6 +1,7 @@
 import hashlib
 
 import pytest
+import torch
 
 from fpeval.adapters import adapter_names
 from fpeval.adapters import anovl, crane, dictas, kagprompt
@@ -159,6 +160,37 @@ def test_anovl_entropy_loss_matches_the_official_objective():
     hard = -mask * prediction[1:].log() - (1 - mask) * prediction[0].log()
     official = soft.sum(-1).mean() + 0.5 * hard.sum(-1).mean()
     assert torch.allclose(anovl.AnoVLAdapter._entropy_loss(prediction), official)
+
+
+def test_anovl_official_weight_reset_reinitializes_linear_and_conv_layers():
+    linear = torch.nn.Linear(4, 3)
+    conv = torch.nn.Conv2d(2, 3, kernel_size=1)
+    untouched = torch.nn.BatchNorm1d(3)
+    with torch.no_grad():
+        linear.weight.fill_(42)
+        linear.bias.fill_(42)
+        conv.weight.fill_(42)
+        conv.bias.fill_(42)
+        untouched.weight.fill_(42)
+        untouched.bias.fill_(42)
+
+    module = torch.nn.ModuleList([linear, conv, untouched])
+    module.apply(anovl._official_weight_reset)
+
+    assert not torch.all(linear.weight == 42)
+    assert not torch.all(linear.bias == 42)
+    assert not torch.all(conv.weight == 42)
+    assert not torch.all(conv.bias == 42)
+    assert torch.all(untouched.weight == 42)
+    assert torch.all(untouched.bias == 42)
+
+
+def test_anovl_predict_unconditionally_uses_the_official_weight_reset():
+    import inspect
+
+    source = inspect.getsource(anovl.AnoVLAdapter.predict)
+    assert "module.apply(_official_weight_reset)" in source
+    assert "if self._weight_reset" not in source
 
 
 def test_anovl_rejects_an_unknown_target(tmp_path):

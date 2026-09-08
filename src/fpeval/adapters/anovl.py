@@ -28,6 +28,19 @@ OFFICIAL_SEED = {"mvtec": 111, "visa": 42}
 MAP_TOKEN_INDEX = 6
 
 
+def _official_weight_reset(module: torch.nn.Module) -> None:
+    """Reset the layers reset by AnoVL's official evaluation scripts.
+
+    ``weight_reset`` is defined in ``vl_test.py`` and ``vis_test.py``, not in
+    the repository's ``model.py``.  Keep the tiny callback here instead of
+    importing either executable evaluation script, which would also import its
+    dataset and metric stack as a side effect.
+    """
+
+    if isinstance(module, (torch.nn.Conv2d, torch.nn.Linear)):
+        module.reset_parameters()
+
+
 def _import_official_repository(repository: str | Path):
     root = Path(repository).expanduser().resolve()
     required = (
@@ -152,7 +165,6 @@ class AnoVLAdapter(ModelAdapter):
         self._resize = TF.resize
         self._bicubic = InterpolationMode.BICUBIC
         self._aug = utils_module.aug
-        self._weight_reset = model_module.__dict__.get("weight_reset")
         self._adapter_class = getattr(model_module, module_name)
         self._reseed()
 
@@ -283,8 +295,9 @@ class AnoVLAdapter(ModelAdapter):
             text, _ = self._text_features(category)
             text_features = torch.stack([text], dim=0)
             module, optimizer = self._adapter_for(category)
-            if self._weight_reset is not None:
-                module.apply(self._weight_reset)
+            # The official vl_test.py and vis_test.py loops reset every Linear
+            # and Conv2d layer immediately before adapting each image.
+            module.apply(_official_weight_reset)
 
             with torch.no_grad():
                 # The official aug() constructs its affine grids on CPU. Feed
