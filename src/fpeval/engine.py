@@ -19,7 +19,7 @@ import torch
 import torch.nn.functional as F
 from tqdm.auto import tqdm
 
-from .adapters import create_adapter
+from .adapters import create_adapter, regime
 from .archive import archive_directory
 from .attacks import Attack, discover_attacks, materialize_input
 from .config import EvaluationConfig
@@ -565,12 +565,17 @@ def _evaluate_condition(
 
 def evaluate(config: EvaluationConfig) -> Path:
     """Run all selected setup/scope conditions and return the model output root."""
-    output = Path(config.output_root).expanduser().resolve() / config.model
+    # Zero-shot and few-shot results land in their own subtree, so a run of one
+    # regime never interleaves with the other under a shared output root.
+    regime_root = (
+        Path(config.output_root).expanduser().resolve() / regime(config.model)
+    )
+    output = regime_root / config.model
     structured_output = separated_root(
-        config.output_root, config.model, config.separated_output_root
+        regime_root, config.model, config.separated_output_root
     )
     structured_samples_output = model_sibling_root(
-        config.output_root,
+        regime_root,
         config.model,
         "_samples_separated",
         config.separated_samples_output_root,

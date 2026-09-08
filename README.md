@@ -758,8 +758,13 @@ reported as a complete benchmark.
 
 ## Outputs
 
+Every path below sits under a regime folder, `zero_shot/` or `few_shot/`, so a
+shared `output_root` never interleaves the two. The regime is read from the
+adapter's constructor - one that takes a `k_shot` or `shot` reference-set size
+is few-shot - so it follows the adapter and needs no configuration.
+
 ```text
-<output_root>/<model>/
+<output_root>/<regime>/<model>/
   summary.csv
   category_metrics.csv
   per_image.csv
@@ -769,7 +774,7 @@ reported as a complete benchmark.
   predictions/                 # only when save_predictions=true
   extracted_attacks/           # ZIP cache; ignored by numerical outputs
 
-<output_root>/<model>_separated/
+<output_root>/<regime>/<model>_separated/
   setups/
     <frozen_prompt|learnable_prompt>/
       <setup_id>/
@@ -778,13 +783,13 @@ reported as a complete benchmark.
             <scope>/
               numerical/       # CSV/JSON results for only this slice
 
-<output_root>/<model>_samples_separated/
+<output_root>/<regime>/<model>_samples_separated/
   setups/<prompt_mode>/<setup_id>/datasets/<source>_to_<target>/<scope>/
     <threshold_mode>/<compact_condition>/<selection>__<protocol_id>/...
 
-<output_root>/<model>.zip
-<output_root>/<model>_separated.zip
-<output_root>/<model>_samples_separated.zip
+<output_root>/<regime>/<model>.zip
+<output_root>/<regime>/<model>_separated.zip
+<output_root>/<regime>/<model>_samples_separated.zip
 ```
 
 `summary.csv` has one row per condition and pixel-threshold mode.

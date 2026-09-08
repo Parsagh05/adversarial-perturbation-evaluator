@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Sequence
 from typing import TypeVar
@@ -120,10 +121,24 @@ def adapter_names() -> tuple[str, ...]:
     return tuple(sorted(_ADAPTERS))
 
 
-def create_adapter(name: str, **kwargs: object) -> ModelAdapter:
+def regime(name: str) -> str:
+    """``"few_shot"`` when the adapter takes a reference set, else ``"zero_shot"``.
+
+    Every few-shot adapter names its reference-set size ``k_shot`` or ``shot``
+    and no zero-shot one accepts either, so the constructor signature is the
+    registry - there is no second list to drift out of sync.
+    """
+    parameters = inspect.signature(_lookup(name).__init__).parameters
+    return "few_shot" if {"k_shot", "shot"} & set(parameters) else "zero_shot"
+
+
+def _lookup(name: str) -> type[ModelAdapter]:
     key = name.strip().lower()
     try:
-        adapter = _ADAPTERS[key]
+        return _ADAPTERS[key]
     except KeyError as error:
         raise ValueError(f"Unknown adapter {name!r}; available: {adapter_names()}") from error
-    return adapter(**kwargs)
+
+
+def create_adapter(name: str, **kwargs: object) -> ModelAdapter:
+    return _lookup(name)(**kwargs)

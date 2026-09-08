@@ -59,6 +59,33 @@ def shot_parameter(name: str) -> str:
     raise AssertionError(f"{name} exposes no shot parameter")
 
 
+def test_regime_matches_the_declared_few_shot_set():
+    """Results are filed under the regime, so the split has to be exact.
+
+    ``regime`` reads the constructor rather than a second list, and this pins
+    that the reading agrees with the declared set over every registered name,
+    aliases included.
+    """
+    from tests.test_notebooks import FEW_SHOT, ZERO_SHOT
+
+    for name in FEW_SHOT:
+        assert base.regime(name) == "few_shot", name
+    for name in ZERO_SHOT:
+        assert base.regime(name) == "zero_shot", name
+    # Aliases must land in the same tree as the name they alias, or the same
+    # model would write into both regimes depending on how it was spelled.
+    squash = lambda value: value.replace("-", "").replace("_", "")
+    few_shot = {squash(name) for name in FEW_SHOT}
+    for name in base.adapter_names():
+        expected = "few_shot" if squash(name) in few_shot else "zero_shot"
+        assert base.regime(name) == expected, name
+
+
+def test_regime_rejects_an_unknown_adapter():
+    with pytest.raises(ValueError, match="Unknown adapter"):
+        base.regime("not_a_model")
+
+
 def test_every_few_shot_adapter_is_listed():
     """A new few-shot adapter must declare which counts it supports."""
     from tests.test_notebooks import FEW_SHOT

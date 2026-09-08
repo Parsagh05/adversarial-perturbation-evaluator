@@ -1,6 +1,6 @@
 """Built-in target-model adapters."""
 
-from .base import ModelAdapter, adapter_names, create_adapter, register_adapter
+from .base import ModelAdapter, adapter_names, create_adapter, regime, register_adapter
 from . import anomalyclip as _anomalyclip  # noqa: F401
 from . import aaclip as _aaclip  # noqa: F401
 from . import adaclip as _adaclip  # noqa: F401
@@ -26,4 +26,4 @@ from . import anovl as _anovl  # noqa: F401
 from . import kagprompt as _kagprompt  # noqa: F401
 from . import promptad as _promptad  # noqa: F401
 
-__all__ = ["ModelAdapter", "adapter_names", "create_adapter", "register_adapter"]
+__all__ = ["ModelAdapter", "adapter_names", "create_adapter", "regime", "register_adapter"]

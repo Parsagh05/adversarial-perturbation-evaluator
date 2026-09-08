@@ -44,6 +44,31 @@ def test_kaggle_notebook_code_cells_compile_and_clone_evaluator():
         assert "inventory_attack_setups" in source
 
 
+def test_notebooks_read_their_results_from_the_regime_folder():
+    """evaluate() files results under ``zero_shot/`` or ``few_shot/``.
+
+    The post-run cell reads ``thresholds.json`` back, so a notebook still
+    pointing at the old flat path does not print a stale name - it raises.
+    """
+    from fpeval.adapters import regime as adapter_regime
+
+    for model in sorted(ZERO_SHOT | FEW_SHOT):
+        notebook = json.loads(notebook_path(model).read_text(encoding="utf-8"))
+        source = "\n".join(
+            "".join(cell.get("source", []))
+            for cell in notebook["cells"]
+            if cell["cell_type"] == "code"
+        )
+        # The folder the notebook lives in and the one the engine writes to must
+        # agree, or results land somewhere the notebook never looks.
+        assert regime(model) == adapter_regime(model), model
+        for expected in (
+            f"OUTPUT_ROOT / '{regime(model)}' / '{model}'",
+            f"OUTPUT_ROOT / '{regime(model)}' / f'{{name}}.zip'",
+        ):
+            assert expected in source, (model, expected)
+
+
 def test_every_adapter_ships_a_config_notebook_and_script():
     """Adding an adapter without its entry points is easy to miss."""
     from fpeval.adapters import adapter_names

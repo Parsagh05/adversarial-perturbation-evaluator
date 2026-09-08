@@ -82,7 +82,7 @@ def test_end_to_end_fixed_cohort(tmp_path):
         images = list(csv.DictReader(handle))
     assert len(images) == 2
     assert sum(int(row["attacked"]) for row in images) == 1
-    results_root = tmp_path / "results"
+    results_root = tmp_path / "results" / "zero_shot"
     separated = (
         results_root / "test_adapter_separated" / "setups"
         / "frozen_prompt" / "steps500_eps2" / "datasets"
@@ -116,6 +116,8 @@ def test_end_to_end_fixed_cohort(tmp_path):
         "test_adapter_samples_separated.zip",
     ):
         assert (results_root / archive).is_file()
+    # The regime folder is the only thing directly under the output root.
+    assert [path.name for path in (tmp_path / "results").iterdir()] == ["zero_shot"]
     # Samples are delivered only in the input-shaped separated tree; the old
     # consolidated copy held the same folders and was never archived.
     assert not (results_root / "test_adapter_samples").exists()
