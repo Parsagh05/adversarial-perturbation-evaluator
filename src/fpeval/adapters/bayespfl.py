@@ -6,6 +6,7 @@ from collections.abc import Sequence
 import hashlib
 import importlib
 import json
+import os
 from pathlib import Path
 import sys
 from types import SimpleNamespace
@@ -87,10 +88,18 @@ def _import_official_repository(repository: str | Path):
         )
         if not origin.startswith(root_text):
             sys.modules.pop(name, None)
-    return (
-        importlib.import_module("models.model_CLIP"),
-        importlib.import_module("models.VPB"),
-    )
+    # The upstream tokenizer opens ./models/bpe_simple_vocab_16e6.txt.gz
+    # during import. Resolve that path from its checkout, even when launched
+    # by the evaluator elsewhere, and restore the caller's cwd on failure too.
+    previous_cwd = Path.cwd()
+    try:
+        os.chdir(root)
+        return (
+            importlib.import_module("models.model_CLIP"),
+            importlib.import_module("models.VPB"),
+        )
+    finally:
+        os.chdir(previous_cwd)
 
 
 def _sha256(path: Path) -> str:

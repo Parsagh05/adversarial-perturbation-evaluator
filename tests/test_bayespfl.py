@@ -1,4 +1,5 @@
 import hashlib
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -100,6 +101,41 @@ def test_adapter_rejects_non_official_settings(tmp_path):
 def test_adapter_reports_an_incomplete_repository(tmp_path):
     with pytest.raises(FileNotFoundError, match="repository is incomplete"):
         create_adapter("bayespfl", repository=str(tmp_path), target_dataset="mvtec")
+
+
+@pytest.mark.parametrize("fail_import", [False, True])
+def test_tokenizer_path_resolves_from_checkout_and_cwd_is_restored(
+    tmp_path, monkeypatch, fail_import
+):
+    import fpeval.adapters.bayespfl as module
+
+    root = tmp_path / "Bayes-PFL"
+    models = root / "models"
+    models.mkdir(parents=True)
+    for path in (models / "model_CLIP.py", models / "VPB.py", root / "test.py"):
+        path.touch()
+    (models / "bpe_simple_vocab_16e6.txt.gz").write_bytes(b"vocabulary fixture")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.syspath_prepend(str(root))
+    calls = []
+
+    def import_with_relative_vocabulary(name):
+        assert Path("./models/bpe_simple_vocab_16e6.txt.gz").read_bytes() == b"vocabulary fixture"
+        calls.append(name)
+        if fail_import:
+            raise ImportError("upstream import failed")
+        return name
+
+    monkeypatch.setattr(module.importlib, "import_module", import_with_relative_vocabulary)
+    if fail_import:
+        with pytest.raises(ImportError, match="upstream import failed"):
+            module._import_official_repository(root)
+    else:
+        assert module._import_official_repository(root) == (
+            "models.model_CLIP", "models.VPB"
+        )
+    assert calls
+    assert Path.cwd() == tmp_path
 
 
 def _adapter_without_weights(alpha=0.5):
