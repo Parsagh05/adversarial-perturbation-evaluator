@@ -287,7 +287,10 @@ class AnoVLAdapter(ModelAdapter):
                 module.apply(self._weight_reset)
 
             with torch.no_grad():
-                augmented = self._aug(image)
+                # The official aug() constructs its affine grids on CPU. Feed
+                # it a CPU tensor, as the official dataloader does, then move
+                # the completed 22-view batch to the model device.
+                augmented = self._aug(image.cpu()).to(self.device)
                 image_features, _ = self._model.encode_image(augmented, self.features)
                 image_features = image_features / image_features.norm(
                     dim=-1, keepdim=True

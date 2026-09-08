@@ -1,6 +1,7 @@
 import hashlib
 
 import pytest
+import torch
 
 from fpeval.adapters import adapter_names, create_adapter
 from fpeval.adapters import cops, mrad, winclip
@@ -63,6 +64,22 @@ def test_mrad_memory_banks_come_in_image_and_patch_pairs(tmp_path, monkeypatch):
     image_bank, patch_bank = mrad.resolve_memory_banks("visa", download_root=tmp_path)
     assert image_bank.name == "cache_model_visa.pt"
     assert patch_bank.name == "cache_patch_model_visa.pt"
+
+
+def test_mrad_memory_bank_load_is_device_portable(tmp_path, monkeypatch):
+    path = tmp_path / "cache.pt"
+    path.write_bytes(b"stub")
+    captured = {}
+
+    def portable_load(selected, **kwargs):
+        captured.update(kwargs)
+        assert selected == path
+        return {"keys": torch.ones(2, 3), "values": torch.zeros(2, 2)}
+
+    monkeypatch.setattr(mrad.torch, "load", portable_load)
+    keys, values = mrad._load_memory_bank(path, torch.device("cpu"))
+    assert captured == {"map_location": torch.device("cpu"), "weights_only": True}
+    assert keys.device.type == values.device.type == "cpu"
 
 
 def test_mrad_rejects_an_unknown_memory_bank():

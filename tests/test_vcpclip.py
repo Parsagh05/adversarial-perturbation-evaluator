@@ -1,4 +1,5 @@
 import hashlib
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -95,6 +96,27 @@ def test_clip_backbone_reuses_a_verified_cache_without_downloading(
 
     monkeypatch.setattr(module.urllib.request, "urlretrieve", fail)
     assert resolve_clip_backbone(tmp_path) == tmp_path / "ViT-L-14-336px.pt"
+
+
+def test_official_import_uses_repository_cwd_and_restores_it(tmp_path, monkeypatch):
+    import fpeval.adapters.vcpclip as module
+
+    models = tmp_path / "models"
+    models.mkdir()
+    (models / "model_CLIP.py").write_text("", encoding="utf-8")
+    (tmp_path / "test.py").write_text("", encoding="utf-8")
+    original = Path.cwd()
+    observed = []
+
+    def fake_import(name):
+        observed.append((name, Path.cwd()))
+        return name
+
+    monkeypatch.setattr(module.importlib, "import_module", fake_import)
+    imported = module._import_official_repository(tmp_path)
+    assert len(imported) == 4
+    assert all(cwd == tmp_path.resolve() for _, cwd in observed)
+    assert Path.cwd() == original
 
 
 def test_adapter_rejects_non_official_settings(tmp_path):

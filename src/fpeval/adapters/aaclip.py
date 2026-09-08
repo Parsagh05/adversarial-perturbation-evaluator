@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+import hashlib
 import importlib
 from pathlib import Path
 import sys
+import urllib.request
 
 import numpy as np
 import torch
@@ -24,6 +26,55 @@ OFFICIAL_DATASET_NAMES = {"mvtec": "MVTec", "visa": "VisA"}
 KAGGLE_DATASET = "parsagh1383/aa-clip-checkpoints-main"
 # test.py evaluates a dataset with the adapters trained on the other one.
 ZERO_SHOT_TRAINING = {"mvtec": "TrainOnVisA", "visa": "TrainOnMVTec"}
+
+# AA-CLIP's README requires this exact OpenAI checkpoint below model/. The
+# official loader itself does not download it, so keep a verified evaluator
+# cache and point the official registry at that copy before model creation.
+CLIP_BACKBONE_SHA256 = (
+    "3035c92b350959924f9f00213499208652fc7ea050643e8b385c2dac08641f02"
+)
+CLIP_BACKBONE_NAME = "ViT-L-14-336px.pt"
+CLIP_BACKBONE_URL = (
+    f"https://openaipublic.azureedge.net/clip/models/{CLIP_BACKBONE_SHA256}/"
+    f"{CLIP_BACKBONE_NAME}"
+)
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for block in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def _cache_root(download_root: str | Path | None) -> Path:
+    root = (
+        Path(download_root).expanduser().resolve()
+        if download_root
+        else Path.home() / ".cache" / "aaclip"
+    )
+    root.mkdir(parents=True, exist_ok=True)
+    return root
+
+
+def resolve_clip_backbone(download_root: str | Path | None = None) -> Path:
+    """Download and checksum-verify AA-CLIP's required OpenAI backbone."""
+
+    destination = _cache_root(download_root) / CLIP_BACKBONE_NAME
+    if destination.is_file() and _sha256(destination) == CLIP_BACKBONE_SHA256:
+        return destination
+    temporary = destination.with_suffix(".pt.tmp")
+    urllib.request.urlretrieve(CLIP_BACKBONE_URL, temporary)
+    actual = _sha256(temporary)
+    if actual != CLIP_BACKBONE_SHA256:
+        temporary.unlink(missing_ok=True)
+        raise ValueError(
+            "AA-CLIP OpenAI backbone checksum mismatch: expected "
+            f"{CLIP_BACKBONE_SHA256}, got {actual}"
+        )
+    temporary.replace(destination)
+    return destination
 
 
 def resolve_checkpoints(
@@ -173,6 +224,24 @@ class AACLIPAdapter(ModelAdapter):
             _import_official_repository(repository)
         )
         utils_module.setup_seed(int(seed))
+
+        checkpoint_registry = getattr(clip_module, "_MODEL_CKPT_PATHS", None)
+        if not isinstance(checkpoint_registry, dict):
+            raise RuntimeError("Official AA-CLIP model checkpoint registry is missing")
+        bundled_backbone = Path(checkpoint_registry.get(backbone, ""))
+        backbone_path = (
+            bundled_backbone.resolve()
+            if bundled_backbone.is_file()
+            and _sha256(bundled_backbone) == CLIP_BACKBONE_SHA256
+            else resolve_clip_backbone(download_root)
+        )
+        checkpoint_registry[backbone] = backbone_path
+        self._runtime_metadata.update(
+            {
+                "clip_backbone": str(backbone_path),
+                "clip_backbone_sha256": CLIP_BACKBONE_SHA256,
+            }
+        )
 
         clip_model = clip_module.create_model(
             model_name=backbone,

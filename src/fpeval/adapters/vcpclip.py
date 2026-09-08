@@ -6,6 +6,7 @@ from collections.abc import Sequence
 import hashlib
 import importlib
 import json
+import os
 from pathlib import Path
 import sys
 import urllib.request
@@ -104,12 +105,21 @@ def _import_official_repository(repository: str | Path):
         )
         if not origin.startswith(root_text):
             sys.modules.pop(name, None)
-    return (
-        importlib.import_module("models.model_CLIP"),
-        importlib.import_module("models.pre_vcp"),
-        importlib.import_module("models.post_vcp"),
-        importlib.import_module("models.prompt_ensemble"),
-    )
+    # models/simple_tokenizer.py opens its BPE vocabulary through the relative
+    # path ./models/bpe_simple_vocab_16e6.txt.gz at import time. Import from the
+    # official checkout, then restore the evaluator's working directory.
+    previous_cwd = Path.cwd()
+    try:
+        os.chdir(root)
+        modules = (
+            importlib.import_module("models.model_CLIP"),
+            importlib.import_module("models.pre_vcp"),
+            importlib.import_module("models.post_vcp"),
+            importlib.import_module("models.prompt_ensemble"),
+        )
+    finally:
+        os.chdir(previous_cwd)
+    return modules
 
 
 def _sha256(path: Path) -> str:

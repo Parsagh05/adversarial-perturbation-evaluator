@@ -16,14 +16,12 @@
   "model_kwargs_by_target": {
     "mvtec": {
       "repository": "/kaggle/input/aa-clip/AA-CLIP",
-      "image_checkpoint": "/kaggle/input/aa-clip-checkpoints-main/TrainOnVisA/image_adapter.pth",
-      "text_checkpoint": "/kaggle/input/aa-clip-checkpoints-main/TrainOnVisA/text_adapter.pth",
+      "download_root": "/kaggle/working/aaclip-weights",
       "target_dataset": "mvtec"
     },
     "visa": {
       "repository": "/kaggle/input/aa-clip/AA-CLIP",
-      "image_checkpoint": "/kaggle/input/aa-clip-checkpoints-main/TrainOnMVTec/image_adapter.pth",
-      "text_checkpoint": "/kaggle/input/aa-clip-checkpoints-main/TrainOnMVTec/text_adapter.pth",
+      "download_root": "/kaggle/working/aaclip-weights",
       "target_dataset": "visa"
     }
   },

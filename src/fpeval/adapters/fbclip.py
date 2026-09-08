@@ -123,6 +123,20 @@ def resolve_checkpoint(
     return destination
 
 
+def _load_released_checkpoint(
+    path: str | Path, device: torch.device
+) -> dict[str, object]:
+    """Load the checksum-pinned release under PyTorch's modern default."""
+
+    try:
+        payload = torch.load(path, map_location=device, weights_only=False)
+    except TypeError:  # PyTorch before the weights_only keyword.
+        payload = torch.load(path, map_location=device)
+    if not isinstance(payload, dict):
+        raise TypeError(f"FB-CLIP checkpoint must contain a mapping: {path}")
+    return payload
+
+
 @register_adapter("fb-clip")
 @register_adapter("fbclip")
 class FBCLIPAdapter(ModelAdapter):
@@ -184,7 +198,10 @@ class FBCLIPAdapter(ModelAdapter):
         self._args = SimpleNamespace(feature_layers=self.feature_layers)
         model.FB_params(args=self._args, device=self.device)
 
-        payload = torch.load(str(checkpoint_path), map_location=self.device)
+        # This released checkpoint contains NumPy scalar metadata in addition
+        # to tensors. It is checksum-verified by resolve_checkpoint(), but is
+        # not compatible with PyTorch 2.6+'s weights_only=True default.
+        payload = _load_released_checkpoint(checkpoint_path, self.device)
         learner.load_state_dict(payload["prompt_learner"])
         trainable = payload.get("model_trainable_params")
         if not trainable:

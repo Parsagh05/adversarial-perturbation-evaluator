@@ -1,6 +1,7 @@
 import hashlib
 
 import pytest
+import torch
 
 from fpeval.adapters import adapter_names, create_adapter
 from fpeval.adapters import aprilgan, fbclip, tipsomaly
@@ -80,6 +81,24 @@ def test_fbclip_rejects_a_corrupt_download(tmp_path, monkeypatch):
         fbclip.resolve_checkpoint("train_on_visa", download_root=tmp_path)
 
 
+def test_fbclip_explicitly_disables_weights_only_for_its_release(monkeypatch):
+    captured = {}
+
+    def fake_load(path, **kwargs):
+        captured["path"] = path
+        captured.update(kwargs)
+        return {"prompt_learner": {}}
+
+    monkeypatch.setattr(fbclip.torch, "load", fake_load)
+    payload = fbclip._load_released_checkpoint("official.pth", torch.device("cpu"))
+    assert payload == {"prompt_learner": {}}
+    assert captured == {
+        "path": "official.pth",
+        "map_location": torch.device("cpu"),
+        "weights_only": False,
+    }
+
+
 def test_adapters_reject_non_official_settings(tmp_path):
     with pytest.raises(ValueError, match="image_size=518"):
         create_adapter("aprilgan", repository=str(tmp_path), target_dataset="mvtec",
@@ -112,8 +131,6 @@ def test_tipsomaly_divides_by_the_tips_temperature():
     """test.py's calc_soft_score is softmax((v @ t.T) / temp), and train.py
     optimized the learnable prompts under that same division, so the direction
     is part of the released model. Multiplying instead was a real bug."""
-    import torch
-
     from fpeval.adapters.tipsomaly import _soft_score
 
     torch.manual_seed(0)
@@ -125,3 +142,16 @@ def test_tipsomaly_divides_by_the_tips_temperature():
     # The multiplied form is not the same function, so the test is not vacuous.
     multiplied = torch.softmax(temperature * vision @ text.T, dim=-1)
     assert not torch.allclose(official, multiplied)
+
+
+def test_tipsomaly_accepts_official_batched_text_features():
+    from fpeval.adapters.tipsomaly import _soft_score
+
+    vision = torch.randn(1, 5, 8)
+    text = torch.randn(1, 2, 8)
+    expected = torch.softmax(
+        (vision @ text.permute(0, 2, 1)) / 0.01, dim=-1
+    )
+    actual = _soft_score(vision, text, 0.01)
+    assert actual.shape == (1, 5, 2)
+    assert torch.allclose(actual, expected)

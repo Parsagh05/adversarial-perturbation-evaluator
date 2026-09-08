@@ -1,7 +1,9 @@
+import hashlib
 from inspect import signature
 
 import numpy as np
 
+from fpeval.adapters import aaclip
 from fpeval.adapters.aaclip import AACLIPAdapter
 
 
@@ -16,6 +18,27 @@ def test_aaclip_constructor_matches_official_cli_defaults():
     assert parameters["image_adapter_layers"].default == 6
     assert parameters["feature_levels"].default == (6, 12, 18, 24)
     assert parameters["relu"].default is False
+
+
+def test_aaclip_backbone_url_is_the_official_checksum_address():
+    assert len(aaclip.CLIP_BACKBONE_SHA256) == 64
+    assert aaclip.CLIP_BACKBONE_SHA256 in aaclip.CLIP_BACKBONE_URL
+    assert aaclip.CLIP_BACKBONE_URL.endswith("ViT-L-14-336px.pt")
+
+
+def test_aaclip_reuses_a_verified_backbone_cache(tmp_path, monkeypatch):
+    payload = b"cached-aaclip-backbone"
+    cached = tmp_path / aaclip.CLIP_BACKBONE_NAME
+    cached.write_bytes(payload)
+    monkeypatch.setattr(
+        aaclip, "CLIP_BACKBONE_SHA256", hashlib.sha256(payload).hexdigest()
+    )
+
+    def fail(*args, **kwargs):
+        raise AssertionError("a verified AA-CLIP backbone must not be downloaded")
+
+    monkeypatch.setattr(aaclip.urllib.request, "urlretrieve", fail)
+    assert aaclip.resolve_clip_backbone(tmp_path) == cached
 
 
 def test_aaclip_official_category_aggregation_and_frozen_reference():

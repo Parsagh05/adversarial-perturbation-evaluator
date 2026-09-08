@@ -175,6 +175,23 @@ def resolve_memory_banks(
     return tuple(_download(MEMORY_BANKS[key], root) for key in keys)
 
 
+def _load_memory_bank(
+    path: str | Path, device: torch.device
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Load an official MRAD bank independently of the GPU that saved it."""
+
+    try:
+        payload = torch.load(path, map_location=device, weights_only=True)
+    except TypeError:  # PyTorch before the weights_only keyword.
+        payload = torch.load(path, map_location=device)
+    if not isinstance(payload, dict) or not {"keys", "values"} <= set(payload):
+        raise ValueError(f"MRAD memory bank has no keys/values tensors: {path}")
+    keys, values = payload["keys"], payload["values"]
+    if not isinstance(keys, torch.Tensor) or not isinstance(values, torch.Tensor):
+        raise TypeError(f"MRAD memory bank keys/values must be tensors: {path}")
+    return keys.to(device), values.to(device)
+
+
 @register_adapter("mrad")
 class MRADAdapter(ModelAdapter):
     """Official MRAD zero-shot inference for MVTec AD and VisA.
@@ -286,20 +303,15 @@ class MRADAdapter(ModelAdapter):
         self._prompt_proj = prompt_proj
         self._prompt_learner = prompt_learner
 
-        # Loaded once, before any image is scored, and never written to again.
-        self._cache_key, self._cache_value = mrad_module.build_cache_model(
-            load_cache=True,
-            clip_model=model,
-            train_loader_cache=None,
-            device=str(self.device),
-            dir=str(image_bank),
+        # The upstream helpers call torch.load(path) without map_location, so
+        # their released cuda:2 banks fail on one-GPU machines. Their load
+        # branches only read these two tensors and move them to `device`; do
+        # that exact operation portably here.
+        self._cache_key, self._cache_value = _load_memory_bank(
+            image_bank, self.device
         )
-        self._patch_keys, self._patch_values = mrad_module.build_patch_cache_model(
-            load_cache=True,
-            clip_model=model,
-            train_loader_cache=None,
-            device=str(self.device),
-            dir=str(patch_bank),
+        self._patch_keys, self._patch_values = _load_memory_bank(
+            patch_bank, self.device
         )
 
         self._runtime_metadata = {

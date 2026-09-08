@@ -33,7 +33,9 @@ def _soft_score(
     division, and the upstream TIPS demo applies it the same way, so the
     direction is not optional: multiplying instead flattens every softmax."""
 
-    return ((vision @ text.T) / temperature).softmax(dim=-1)
+    # Official text features are batched as [1, 2, D]. transpose(-2, -1)
+    # supports that layout and the unbatched [2, D] form used by utilities.
+    return ((vision @ text.transpose(-2, -1)) / temperature).softmax(dim=-1)
 
 
 def _import_official_repository(repository: str | Path):
