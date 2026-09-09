@@ -168,7 +168,7 @@ promptad = [
   # mirrored on Kaggle and fetched with kagglehub. PromptAD vendors its own
   # CLIPAD fork, which pulls ftfy/regex, and its model blurs with scipy.
   "ftfy>=6.0",
-  "kagglehub>=0.3",
+  "kagglehub>=1.0.2",
   "opencv-python>=4.6",
   "regex>=2022.10",
   "scikit-learn>=1.2",
@@ -302,7 +302,7 @@ adaclip = [
 ]
 aaclip = [
   # The trained adapters are mirrored on Kaggle and fetched with kagglehub.
-  "kagglehub>=0.3",
+  "kagglehub>=1.0.2",
   "einops==0.7.0",
   "ftfy==6.2.0",
   # model/adapter_modules.py, model/transformer.py, and forward_utils.py all
