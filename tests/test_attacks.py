@@ -112,9 +112,13 @@ def test_cross_dataset_scope_uses_the_whole_target_cohort(tmp_path):
 def test_setup_id_normalization_covers_the_generator_grammar(tmp_path):
     """Mirror setup_catalog.compose_setup_id.
 
-    steps{N}_eps{E}[_margin_topk][_train{P}][_learnable_prompt], where the step
-    and epsilon grids are swept and a decimal point becomes "p". _metadata reads
-    only the path, so the bundle does not need to exist.
+    steps{N}[_cat{C}_img{I}]_eps{E}[_margin_topk][_train{P}][_learnable_prompt],
+    where the step and epsilon grids are swept and a decimal point becomes "p".
+    _metadata reads only the path, so the bundle does not need to exist.
+
+    A missed form is not a loud failure: _metadata falls back to
+    "unspecified_setup", which relabels every condition, silently empties a
+    setup_ids filter, and loses the margin_topk inference.
     """
     cases = [
         # (directory, expected prompt_mode, expected normalized setup_id)
@@ -132,6 +136,15 @@ def test_setup_id_normalization_covers_the_generator_grammar(tmp_path):
          "frozen_prompt", "steps100_eps4_margin_topk_train20"),
         ("steps250_eps0p02_margin_topk_train12p5_learnable_prompt",
          "learnable_prompt", "steps250_eps0p02_margin_topk_train12p5"),
+        # Per-scope PGD step counts: the name carries dataset/category/image when
+        # they differ, and keeps the compact form when they agree.
+        ("steps800_cat200_img100_eps2", "frozen_prompt", "steps800_cat200_img100_eps2"),
+        ("steps800_cat200_img100_eps4_margin_topk",
+         "frozen_prompt", "steps800_cat200_img100_eps4_margin_topk"),
+        ("steps500_cat150_img50_eps4_margin_topk_learnable_prompt",
+         "learnable_prompt", "steps500_cat150_img50_eps4_margin_topk"),
+        ("steps800_cat200_img100_eps4_margin_topk_train20",
+         "frozen_prompt", "steps800_cat200_img100_eps4_margin_topk_train20"),
     ]
     seen = set()
     for directory, expected_mode, expected_id in cases:
@@ -142,6 +155,26 @@ def test_setup_id_normalization_covers_the_generator_grammar(tmp_path):
         assert _metadata(bundle) == (expected_mode, expected_id), directory
         seen.add((expected_mode, expected_id))
     assert len(seen) == len(cases)
+
+
+def test_scope_specific_step_counts_stay_distinct_setups(tmp_path):
+    """Differing per-scope counts must never fold onto the uniform run."""
+    def norm(directory):
+        return _metadata(tmp_path / "setups" / "frozen_prompt" / directory / "bundle")
+
+    uniform = norm("steps800_eps4_margin_topk")
+    split = norm("steps800_cat200_img100_eps4_margin_topk")
+    other = norm("steps800_cat200_img50_eps4_margin_topk")
+    assert uniform[1] == "steps800_eps4_margin_topk"
+    assert len({uniform[1], split[1], other[1]}) == 3
+
+
+def test_the_two_setup_patterns_do_not_drift(tmp_path):
+    """attacks and kaggle parse the same directory names, so pin them equal."""
+    from fpeval import kaggle
+    from fpeval.attacks import SETUP_PATTERN
+
+    assert SETUP_PATTERN.pattern == kaggle.SETUP_PATTERN.pattern
 
 
 def test_a_partial_train_fraction_never_collapses_onto_the_full_run(tmp_path):

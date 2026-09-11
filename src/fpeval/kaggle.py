@@ -7,8 +7,10 @@ from pathlib import Path
 import re
 
 
+# Kept in step with attacks.SETUP_PATTERN; see the grammar note there.
 SETUP_PATTERN = re.compile(
-    r"steps\d+_eps[\dp]+(?:_margin_topk)?(?:_train[\dp]+)?(?:_learnable_prompt)?",
+    r"steps\d+(?:_cat\d+_img\d+)?_eps[\dp]+"
+    r"(?:_margin_topk)?(?:_train[\dp]+)?(?:_learnable_prompt)?",
     re.IGNORECASE,
 )
 

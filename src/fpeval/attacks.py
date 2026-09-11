@@ -25,11 +25,15 @@ SCOPE_NAMES = {
 # evaluation dataset is the source dataset.
 DATASET_LEVEL_SCOPES = frozenset({"per_dataset", "cross_dataset"})
 DIRECTION_LABELS = {"normal_to_abnormal": (0, 1), "abnormal_to_normal": (1, 0)}
-# steps{N}_eps{E}[_margin_topk][_train{P}][_learnable_prompt], matching
-# setup_catalog.compose_setup_id. The step and epsilon grids are swept, so
-# neither count is fixed, and eps/train tags use "p" for a decimal point.
+# steps{N}[_cat{C}_img{I}]_eps{E}[_margin_topk][_train{P}][_learnable_prompt],
+# matching setup_catalog.compose_setup_id. The step and epsilon grids are swept,
+# so no count is fixed, and eps/train tags use "p" for a decimal point. The
+# generator gives each scope its own PGD step count and names the setup after
+# all three; the _cat/_img pair is absent whenever the three agree, which keeps
+# the compact name for a uniform setting.
 SETUP_PATTERN = re.compile(
-    r"steps\d+_eps[\dp]+(?:_margin_topk)?(?:_train[\dp]+)?(?:_learnable_prompt)?",
+    r"steps\d+(?:_cat\d+_img\d+)?_eps[\dp]+"
+    r"(?:_margin_topk)?(?:_train[\dp]+)?(?:_learnable_prompt)?",
     re.I,
 )
 
