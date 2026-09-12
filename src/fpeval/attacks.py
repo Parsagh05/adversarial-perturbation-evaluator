@@ -20,20 +20,38 @@ SCOPE_NAMES = {
     "category": "per_category", "per_category": "per_category",
     "image": "per_image", "per_image": "per_image",
 }
-# Scopes whose perturbation covers a whole dataset rather than one category.
-# The generator delivers the same delta under both, split only by whether the
-# evaluation dataset is the source dataset.
+# Scopes whose perturbation covers a whole dataset rather than one category, so
+# the evaluation cohort is every category instead of one. Under the balanced
+# protocol the generator delivers the same delta to both, split only by whether
+# the evaluation dataset is the source dataset; under the full protocol
+# cross-dataset optimises its own delta over the complete source dataset. Either
+# way each bundle names its own perturbation file, so only the cohort matters
+# here.
 DATASET_LEVEL_SCOPES = frozenset({"per_dataset", "cross_dataset"})
 DIRECTION_LABELS = {"normal_to_abnormal": (0, 1), "abnormal_to_normal": (1, 0)}
-# steps{N}[_cat{C}_img{I}]_eps{E}[_margin_topk][_train{P}][_learnable_prompt],
-# matching setup_catalog.compose_setup_id. The step and epsilon grids are swept,
-# so no count is fixed, and eps/train tags use "p" for a decimal point. The
-# generator gives each scope its own PGD step count and names the setup after
-# all three; the _cat/_img pair is absent whenever the three agree, which keeps
-# the compact name for a uniform setting.
+# ep{E}[_cat{C}_img{I}]_eps{E}[_ce_focal_dice][_full][_train{P}][_learnable_prompt],
+# matching setup_catalog.compose_setup_id. Every number may be fractional, with
+# "p" for the decimal point (ep7p14, eps0p02, train12p5).
+#
+# The generator budgets each scope in epochs and derives its own step count from
+# the training-set size, so the name carries the budget rather than the steps.
+# margin_topk is the default objective and adds no component; ce_focal_dice
+# names itself. Two spellings are historical and still appear in bundles and
+# results produced earlier - steps{N} for the budget, and "_margin_topk" from
+# when that was the named case rather than the default - so both are accepted.
+# The _cat/_img pair is absent whenever the three scopes agree, and "_full"
+# marks the split protocol that keeps every test image; balanced adds nothing.
+#
+# Every optional component must be matched. Missing one does not fail loudly: a
+# partly matched name is truncated to the part that did match, so a "_full" run
+# would carry the same setup_id as the balanced run it must stay separate from.
+_NUMBER = r"\d+(?:p\d+)?"
 SETUP_PATTERN = re.compile(
-    r"steps\d+(?:_cat\d+_img\d+)?_eps[\dp]+"
-    r"(?:_margin_topk)?(?:_train[\dp]+)?(?:_learnable_prompt)?",
+    rf"(?:ep{_NUMBER}|steps\d+)"
+    rf"(?:_cat{_NUMBER}_img{_NUMBER})?"
+    rf"_eps{_NUMBER}"
+    rf"(?:_ce_focal_dice|_margin_topk)?"
+    rf"(?:_full)?(?:_train{_NUMBER})?(?:_learnable_prompt)?",
     re.I,
 )
 
@@ -81,6 +99,23 @@ def materialize_input(root: str | Path, cache: str | Path) -> list[Path]:
     if not found:
         raise FileNotFoundError(f"No attack_manifest.csv found in {root} or its ZIP files")
     return sorted(found)
+
+
+def _formulation_from_setup_id(setup_id: str) -> str:
+    """Which objective a setup ID implies, for manifests that omit the column.
+
+    Only one of the two formulations is ever named, and which one flipped: the
+    generator now treats margin_topk as the default and names ce_focal_dice,
+    having previously done the reverse. The budget spelling dates the ID -
+    "steps{N}" predates both changes, "ep{E}" follows them - so the default a
+    bare name implies is unambiguous and old bundles keep their old reading.
+    """
+    lowered = setup_id.lower()
+    if "ce_focal_dice" in lowered:
+        return "ce_focal_dice"
+    if "margin_topk" in lowered:
+        return "margin_topk"
+    return "ce_focal_dice" if lowered.startswith("steps") else "margin_topk"
 
 
 def _metadata(bundle: Path) -> tuple[str, str]:
@@ -234,7 +269,7 @@ def discover_attacks(
             if DIRECTION_LABELS.get(direction) != (source_label, target_label):
                 raise ValueError(f"Direction/label mismatch for {direction}")
             category = _field(raw, "category", required=False)
-            inferred_formulation = "margin_topk" if "margin_topk" in setup_id else "ce_focal_dice"
+            inferred_formulation = _formulation_from_setup_id(setup_id)
             formulation = _field(
                 raw, "loss_formulation", required=False, default=inferred_formulation
             )

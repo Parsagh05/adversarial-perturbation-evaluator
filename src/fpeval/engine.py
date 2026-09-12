@@ -221,11 +221,25 @@ def _condition_fields(attack: Attack) -> dict[str, Any]:
     names = (
         "prompt_mode", "setup_id", "source_dataset", "target_dataset", "scope",
         "category", "direction", "source_label", "target_label", "loss_formulation",
-        "loss_mode", "epsilon", "image_size", "optimization_steps",
+        "loss_mode", "epsilon", "image_size",
+        # The generator budgets each scope in epochs and derives the step count
+        # from the training-set size, so two conditions in one setup can carry
+        # different step counts. The epoch budget is what the setup fixes; the
+        # step count is what it cost here.
+        "optimization_epochs", "optimization_steps",
         "attack_train_fraction",
         "margin_topk_fraction", "prompt_provenance", "normal_local_target",
         "normal_target_region_fraction", "normal_target_center_x",
         "normal_target_center_y",
+        # Which split the perturbations were built against: "balanced"
+        # downsamples each category to equal labels, "full" keeps every test
+        # image. The two are different cohorts, so a result that does not name
+        # its protocol cannot be compared with one that used the other.
+        "split_protocol",
+        # Under the full protocol cross-dataset optimises over the complete
+        # source dataset rather than reusing the per-dataset delta, so this
+        # distinguishes the attack-train partition from the whole dataset.
+        "training_source",
     )
     return {name: attack.record.get(name, "") for name in names}
 

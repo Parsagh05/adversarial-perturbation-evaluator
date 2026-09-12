@@ -8,9 +8,13 @@ import re
 
 
 # Kept in step with attacks.SETUP_PATTERN; see the grammar note there.
+_NUMBER = r"\d+(?:p\d+)?"
 SETUP_PATTERN = re.compile(
-    r"steps\d+(?:_cat\d+_img\d+)?_eps[\dp]+"
-    r"(?:_margin_topk)?(?:_train[\dp]+)?(?:_learnable_prompt)?",
+    rf"(?:ep{_NUMBER}|steps\d+)"
+    rf"(?:_cat{_NUMBER}_img{_NUMBER})?"
+    rf"_eps{_NUMBER}"
+    rf"(?:_ce_focal_dice|_margin_topk)?"
+    rf"(?:_full)?(?:_train{_NUMBER})?(?:_learnable_prompt)?",
     re.IGNORECASE,
 )
 
