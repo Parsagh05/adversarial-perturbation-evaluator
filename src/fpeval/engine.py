@@ -228,7 +228,14 @@ def _condition_fields(attack: Attack) -> dict[str, Any]:
         # step count is what it cost here.
         "optimization_epochs", "optimization_steps",
         "attack_train_fraction",
-        "margin_topk_fraction", "prompt_provenance", "normal_local_target",
+        "margin_topk_fraction",
+        # Which prompts produced the perturbations. The setup ID names the
+        # prompt family but not its contents, so two runs can share every other
+        # column and still be different attacks: a frozen run before and after
+        # an ensemble change, or two learnable runs on different checkpoints.
+        # One of the pair is empty in either mode.
+        "prompt_ensemble_sha256", "prompt_checkpoint_sha256",
+        "normal_local_target",
         "normal_target_region_fraction", "normal_target_center_x",
         "normal_target_center_y",
         # Which split the perturbations were built against: "balanced"

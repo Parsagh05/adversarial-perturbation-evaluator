@@ -53,13 +53,17 @@ def test_end_to_end_fixed_cohort(tmp_path):
         {"protocol_id": "test/bottle/good/000", "dataset": "mvtec", "category": "bottle", "label": 0, "partition": "evaluation"},
         {"protocol_id": "test/bottle/crack/001", "dataset": "mvtec", "category": "bottle", "label": 1, "partition": "evaluation"},
     ])
-    fields = ["scope", "source_dataset", "target_dataset", "direction", "source_label", "target_label", "loss_mode", "evaluation_attacked_image_count", "perturbation_file", "artifact_sha256", "image_size", "epsilon"]
+    fields = ["scope", "source_dataset", "target_dataset", "direction", "source_label", "target_label", "loss_mode", "evaluation_attacked_image_count", "perturbation_file", "artifact_sha256", "image_size", "epsilon",
+              "prompt_ensemble_sha256", "prompt_checkpoint_sha256"]
     _csv(bundle / "attack_manifest.csv", fields, [{
         "scope": "per_dataset", "source_dataset": "mvtec", "target_dataset": "mvtec",
         "direction": "normal_to_abnormal", "source_label": 0, "target_label": 1,
         "loss_mode": "global", "evaluation_attacked_image_count": 1,
         "perturbation_file": "perturbations/normal.pt", "artifact_sha256": digest,
         "image_size": 8, "epsilon": 0.1,
+        # The setup ID names the prompt family but not its contents, so the
+        # ensemble hash is what separates two otherwise identical runs.
+        "prompt_ensemble_sha256": "b6b0fa61c07f2994", "prompt_checkpoint_sha256": "",
     }])
     output = evaluate(EvaluationConfig(
         attacks_root=str(tmp_path / "attacks"), output_root=str(tmp_path / "results"),
@@ -77,6 +81,9 @@ def test_end_to_end_fixed_cohort(tmp_path):
     assert row["prompt_mode"] == "frozen_prompt"
     assert row["category"] == "bottle"
     assert row["category_count"] == "1"
+    assert row["prompt_ensemble_sha256"] == "b6b0fa61c07f2994"
+    assert row["prompt_checkpoint_sha256"] == ""
+    assert "prompt_provenance" not in row
     assert float(row["clean_i_auroc"]) == 100.0
     with (output / "per_image.csv").open(newline="") as handle:
         images = list(csv.DictReader(handle))

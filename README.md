@@ -824,6 +824,14 @@ single-category summary uses the actual category name. Cross-dataset category
 details remain available in the standard `category_metrics.csv`, while their
 dataset-wide rows in `summary.csv` remain macro summaries.
 
+Every row also carries `prompt_ensemble_sha256` and `prompt_checkpoint_sha256`:
+a frozen run hashes the prompt ensemble it encoded, a learnable run hashes the
+checkpoint it loaded, and the other is empty. The setup ID names the prompt
+family but not its contents, so without these a frozen run before and after an
+ensemble change, or two learnable runs on different checkpoints, are
+indistinguishable in the results despite being different attacks. Manifests
+written before a hash existed leave its column empty.
+
 The consolidated model directory remains the authoritative full-run result.
 Samples are kept in their own consolidated directory, and both numerical
 results and samples also receive independent input-shaped separated trees.
