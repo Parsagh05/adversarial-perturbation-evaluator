@@ -234,6 +234,20 @@ class AccurateWinCLIPAdapter(ModelAdapter):
         self._text[category] = (features[0], features[1])
         return self._text[category]
 
+    def _text_stack(self, category: str, count: int) -> torch.Tensor:
+        """The ``[B, D, 2]`` text argument ``compute_score``/``compute_sim`` take.
+
+        Upstream keeps one ``[1, D]`` mean per class, stacks them into
+        ``[C, 1, D]`` and indexes that by the batch's class ids, so a batch of
+        one class becomes ``[B, 1, D]``; concatenating normal with abnormal then
+        gives ``[B, 2, D]`` and the permute ``[B, D, 2]``. The rows are repeated
+        rather than expanded because both callers divide this tensor in place,
+        which a broadcast view cannot support.
+        """
+        normal, abnormal = self._text_features(category)
+        stacked = torch.stack((normal, abnormal), dim=1)      # [1, 2, D]
+        return stacked.permute(0, 2, 1).repeat(count, 1, 1)   # [count, D, 2]
+
     def predict(
         self, images: torch.Tensor, categories: Sequence[str]
     ) -> tuple[np.ndarray, np.ndarray]:
@@ -267,21 +281,27 @@ class AccurateWinCLIPAdapter(ModelAdapter):
             for category in sorted({str(name) for name in categories}):
                 members = [i for i, name in enumerate(categories)
                            if str(name) == category]
-                normal, abnormal = self._text_features(category)
                 slab = batch[members]
                 count = len(members)
-                text = torch.cat((normal, abnormal), dim=1).permute(0, 2, 1)
-                text = text.expand(count, -1, -1)
 
                 tokens, class_tokens, patch_tokens = self._model.model.encode_image(
                     slab, [large_mask, mid_mask], proj=False
                 )
                 large_tokens, mid_tokens = tokens[0], tokens[1]
 
+                # compute_score and compute_sim normalise their text argument
+                # in place, and upstream hands each call its own ``torch.cat``,
+                # so each gets a freshly materialised tensor here too.
                 # compute_score: abnormal probability of the class token.
-                image_score = self._module.compute_score(class_tokens, text)[:, 0, 1]
-                large_similarity = self._module.compute_sim(large_tokens, text)[:, :, 1]
-                mid_similarity = self._module.compute_sim(mid_tokens, text)[:, :, 1]
+                image_score = self._module.compute_score(
+                    class_tokens, self._text_stack(category, count)
+                )[:, 0, 1]
+                large_similarity = self._module.compute_sim(
+                    large_tokens, self._text_stack(category, count)
+                )[:, :, 1]
+                mid_similarity = self._module.compute_sim(
+                    mid_tokens, self._text_stack(category, count)
+                )[:, :, 1]
 
                 large_score = _harmonic_aggregation(
                     (count, grid, grid), large_similarity, large_mask

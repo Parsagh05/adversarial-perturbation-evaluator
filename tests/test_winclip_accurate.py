@@ -99,6 +99,90 @@ def test_harmonic_aggregation_matches_the_official_definition():
     assert score[0, 0, 1].item() == pytest.approx(2.0 / 6.0)
 
 
+def _upstream_compute_score(image_features, text_features):
+    """``reproduce_WinCLIP.compute_score``, verbatim including the in-place /=."""
+    import torch
+
+    image_features /= image_features.norm(dim=1, keepdim=True)
+    text_features /= text_features.norm(dim=1, keepdim=True)
+    return (torch.bmm(image_features.unsqueeze(1), text_features) / 0.07).softmax(dim=-1)
+
+
+def _upstream_compute_sim(image_features, text_features):
+    """``reproduce_WinCLIP.compute_sim``, verbatim."""
+    import torch
+
+    image_features /= image_features.norm(dim=-1, keepdim=True)
+    text_features /= text_features.norm(dim=1, keepdim=True)
+    return (torch.bmm(image_features.squeeze(2), text_features) / 0.07).softmax(dim=-1)
+
+
+def _adapter_with_text(dimension=8):
+    """An adapter carrying only what ``_text_stack`` needs, no repository."""
+    import torch
+
+    adapter = object.__new__(winclip_accurate.AccurateWinCLIPAdapter)
+    torch.manual_seed(0)
+    adapter._text = {
+        "bottle": (torch.randn(1, dimension), torch.randn(1, dimension))
+    }
+    return adapter
+
+
+def test_text_stack_has_the_shape_the_upstream_scorers_consume():
+    """The bug this pins: a ``[1, D]`` mean concatenated on dim 1 gives
+    ``[1, 2D]``, a 2-D tensor, and the upstream permute then fails.
+
+    Upstream holds ``[C, 1, D]`` and indexes it, so the tensor reaching
+    ``compute_score`` is ``[B, D, 2]``.
+    """
+    adapter = _adapter_with_text(dimension=8)
+    text = adapter._text_stack("bottle", 3)
+    assert tuple(text.shape) == (3, 8, 2)
+
+
+def test_text_stack_feeds_the_real_upstream_scorers():
+    """Shapes are checked against the upstream functions, not asserted alone."""
+    import torch
+
+    adapter = _adapter_with_text(dimension=8)
+    batch, windows = 3, 5
+
+    class_tokens = torch.randn(batch, 8)
+    score = _upstream_compute_score(class_tokens, adapter._text_stack("bottle", batch))
+    assert tuple(score.shape) == (batch, 1, 2)
+    assert tuple(score[:, 0, 1].shape) == (batch,)
+
+    window_tokens = torch.randn(batch, windows, 8)
+    similarity = _upstream_compute_sim(
+        window_tokens, adapter._text_stack("bottle", batch)
+    )
+    assert tuple(similarity.shape) == (batch, windows, 2)
+    assert tuple(similarity[:, :, 1].shape) == (batch, windows)
+
+
+def test_text_stack_survives_the_in_place_normalisation():
+    """Both scorers divide the text tensor in place.
+
+    A broadcast view cannot take that, and a shared one would corrupt the cache
+    that every later batch of this category reads.
+    """
+    import torch
+
+    adapter = _adapter_with_text(dimension=8)
+    before = tuple(item.clone() for item in adapter._text["bottle"])
+
+    text = adapter._text_stack("bottle", 4)
+    _upstream_compute_score(torch.randn(4, 8), text)      # divides text in place
+
+    for original, current in zip(before, adapter._text["bottle"]):
+        assert torch.equal(original, current), "the cached text features moved"
+    # Every row is its own storage, so an in-place write cannot alias.
+    text = adapter._text_stack("bottle", 2)
+    text[0] += 1.0
+    assert not torch.equal(text[0], text[1])
+
+
 def test_the_extra_covers_every_module_level_import_of_the_upstream_entrypoint():
     """The adapter imports reproduce_WinCLIP, so its imports must resolve.
 
