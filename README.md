@@ -824,9 +824,10 @@ single-category summary uses the actual category name. Cross-dataset category
 details remain available in the standard `category_metrics.csv`, while their
 dataset-wide rows in `summary.csv` remain macro summaries.
 
-Every row also carries `prompt_ensemble_sha256` and `prompt_checkpoint_sha256`:
-a frozen run hashes the prompt ensemble it encoded, a learnable run hashes the
-checkpoint it loaded, and the other is empty. The setup ID names the prompt
+The final two columns of every CSV are `prompt_ensemble_sha256` and
+`prompt_checkpoint_sha256`: a frozen run hashes the prompt ensemble it encoded,
+a learnable run hashes the checkpoint it loaded, and the other is empty. They
+are written after the metrics, so the preceding column order is unchanged. The setup ID names the prompt
 family but not its contents, so without these a frozen run before and after an
 ensemble change, or two learnable runs on different checkpoints, are
 indistinguishable in the results despite being different attacks. Manifests
