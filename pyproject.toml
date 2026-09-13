@@ -210,13 +210,23 @@ winclip = [
 winclip_accurate = [
   # This port vendors its own open_clip under src/, which the adapter puts
   # ahead of any installed copy, so open_clip_torch is deliberately absent -
-  # installing it would only risk shadowing the vendored one. These are the
-  # packages that vendored copy imports: ftfy and regex for the tokenizer,
-  # tqdm for the weight download.
+  # installing it would only risk shadowing the vendored one. ftfy and regex
+  # are what that vendored copy imports, tqdm is its download progress bar.
   "ftfy>=6.0",
   "regex>=2023.0",
   "torchvision>=0.15",
   "tqdm>=4.65",
+  # reproduce_WinCLIP.py imports these at module level, and the adapter imports
+  # that module, so they are needed to load it even though the inference path
+  # never calls them: cv2 and skimage.measure serve its visualisation and PRO
+  # helpers, sklearn.metrics and tabulate its own scoring and report table.
+  # Headless OpenCV because evaluation runs on servers with no display; an
+  # environment that also installs an extra asking for opencv-python should
+  # pick one of the two rather than both.
+  "opencv-python-headless>=4.8",
+  "scikit-image>=0.20",
+  "scikit-learn>=1.2",
+  "tabulate>=0.9",
 ]
 afclip = [
   # clip/adaptor.py imports einops; util/utils.py pulls pandas, seaborn and

@@ -8,6 +8,7 @@ stop being an independent measurement.
 """
 
 import inspect
+import re
 
 import pytest
 
@@ -96,6 +97,51 @@ def test_harmonic_aggregation_matches_the_official_definition():
     assert score.shape == (1, 1, 2)
     assert score[0, 0, 0].item() == pytest.approx(0.25)
     assert score[0, 0, 1].item() == pytest.approx(2.0 / 6.0)
+
+
+def test_the_extra_covers_every_module_level_import_of_the_upstream_entrypoint():
+    """The adapter imports reproduce_WinCLIP, so its imports must resolve.
+
+    They are needed to *load* the module even though inference never calls most
+    of them, and a gap surfaces only as a ModuleNotFoundError part-way into a
+    run. Listed here as ``import name -> distribution`` exactly as
+    ``reproduce_WinCLIP.py``, ``dataset.py`` and ``few_shot.py`` import them.
+    """
+    import tomllib
+    from pathlib import Path
+
+    required = {
+        "cv2": "opencv-python-headless",
+        "ftfy": "ftfy",                 # via the vendored open_clip tokenizer
+        "numpy": "numpy",
+        "PIL": "Pillow",
+        "regex": "regex",               # via the vendored open_clip tokenizer
+        "skimage": "scikit-image",
+        "sklearn": "scikit-learn",
+        "tabulate": "tabulate",
+        "torch": "torch",
+        "torchvision": "torchvision",
+        "tqdm": "tqdm",
+    }
+    project = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
+    declared = (project["project"]["optional-dependencies"]["winclip_accurate"]
+                + project["project"]["dependencies"])
+    names = {re.split(r"[<>=!~\[]", item)[0].strip().lower() for item in declared}
+    for module, distribution in sorted(required.items()):
+        assert distribution.lower() in names, (
+            f"{module} is imported by the upstream entry point but "
+            f"{distribution} is in neither the winclip_accurate extra nor the "
+            "core dependencies"
+        )
+
+
+def test_the_extra_does_not_install_open_clip_over_the_vendored_copy():
+    import tomllib
+    from pathlib import Path
+
+    project = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
+    extra = project["project"]["optional-dependencies"]["winclip_accurate"]
+    assert not any("open_clip" in item or "open-clip" in item for item in extra)
 
 
 def test_the_image_score_definitions_differ():
