@@ -7,7 +7,8 @@ fixed `evaluation_test_indices.csv` are always authoritative.
 
 The target adapters are AnomalyCLIP, AA-CLIP, AdaCLIP, FAPrompt, Crane,
 APRIL-GAN, FB-CLIP, Tipsomaly, VCP-CLIP, FiLo, Bayes-PFL, AF-CLIP, CoPS, MRAD
-and WinCLIP, plus Crane+ and AnoVL, and few-shot SubspaceAD, INP-Former, FADE,
+and two independent WinCLIP ports (`winclip`, `winclip_accurate`), plus Crane+
+and AnoVL, and few-shot SubspaceAD, INP-Former, FADE,
 InCTRL, UniVAD, DictAS, KAG-Prompt and PromptAD and few-shot variants of
 WinCLIP, AF-CLIP and APRIL-GAN. The shared evaluator owns attack
 discovery, fixed-cohort validation, RGB construction, metrics, thresholds, and
@@ -372,7 +373,8 @@ images are scored, so a prediction never depends on which images preceded it.
 The banks are built from the dataset that is not being evaluated, which is what
 makes the protocol zero-shot.
 
-WinCLIP uses `eval_WinCLIP.py` at its defaults: the `ViT-B-16-plus-240` backbone
+`winclip` follows **caoyunkang/WinClip** and uses `eval_WinCLIP.py` at its
+defaults: the `ViT-B-16-plus-240` backbone
 with `laion400m_e32` weights, 240-pixel inputs, window scales (2, 3), a
 400-pixel output grid, and seed 111. It is **training-free**, so there is no
 checkpoint at all beyond the backbone, which open_clip downloads on first use.
@@ -389,6 +391,30 @@ adapter performs the official bicubic resize down to 240 itself, which means the
 L-infinity budget applies at 518 and is attenuated by that downsample. That is a
 property of evaluating a 240-pixel model against a 518-pixel perturbation, and
 `runtime_metadata` records both sizes.
+
+`winclip_accurate` is a **second, independent WinCLIP port**, following
+**zqhang/Accurate-WinCLIP-pytorch** and its `reproduce_WinCLIP.py` with the
+arguments `zero_shot.sh` passes. WinCLIP publishes no code, so the two ports are
+two readings of one paper rather than two spellings of one model, and they are
+carried as separate target rows:
+
+| | `winclip` (caoyunkang) | `winclip_accurate` (zqhang) |
+|---|---|---|
+| prompts | 22 templates, no trailing period, 154 normal / 88 abnormal | 21 templates with trailing periods, one duplicated, 147 / 84 |
+| weights | `laion400m_e32` | `laion400m_e31`, hardcoded in `CLIP_AD` and unreachable from `--pretrained` |
+| windows | scales (2, 3) on a 400-pixel grid | 48- and 32-pixel kernels on the 16-pixel patch grid |
+| image score | maximum of the anomaly map | abnormal softmax probability of the class token |
+| map | textual/visual harmonic fusion | harmonic mean of both window scales and the image score |
+
+The image score is the difference that matters. Taking the map maximum ties the
+image decision to the segmentation, while the class-token probability is a
+separate head, so the two can disagree about an image while agreeing about where
+the defect is. Both are training-free, neither blurs its map, and both resize the
+518-pixel cohort to 240 themselves, so the L-infinity note above applies equally.
+
+`winclip_accurate` vendors its own `open_clip` under `src/`, which the adapter
+puts ahead of any installed copy; its extra therefore deliberately omits
+`open_clip_torch`, which could only shadow the vendored one.
 
 ## Few-shot adapters
 

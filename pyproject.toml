@@ -207,6 +207,17 @@ winclip = [
   "timm>=0.9",
   "torchvision>=0.15",
 ]
+winclip_accurate = [
+  # This port vendors its own open_clip under src/, which the adapter puts
+  # ahead of any installed copy, so open_clip_torch is deliberately absent -
+  # installing it would only risk shadowing the vendored one. These are the
+  # packages that vendored copy imports: ftfy and regex for the tokenizer,
+  # tqdm for the weight download.
+  "ftfy>=6.0",
+  "regex>=2023.0",
+  "torchvision>=0.15",
+  "tqdm>=4.65",
+]
 afclip = [
   # clip/adaptor.py imports einops; util/utils.py pulls pandas, seaborn and
   # scikit-image through the official evaluation helpers.

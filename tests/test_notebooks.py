@@ -8,7 +8,7 @@ ZERO_SHOT = {
     "anomalyclip", "aaclip", "adaclip", "faprompt", "crane",
     "aprilgan", "fbclip", "tipsomaly", "vcpclip", "filo",
     "bayespfl", "afclip", "cops", "mrad", "winclip",
-    "craneplus", "anovl",
+    "craneplus", "anovl", "winclip_accurate",
 }
 FEW_SHOT = {
     "winclip_fewshot", "afclip_fewshot", "aprilgan_fewshot",

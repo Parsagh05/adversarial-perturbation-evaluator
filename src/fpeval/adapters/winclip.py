@@ -1,4 +1,12 @@
-"""WinCLIP adapter matching the official zero-shot evaluation defaults."""
+"""WinCLIP as reproduced by caoyunkang/WinClip.
+
+WinCLIP publishes no code, so this is one of two independent ports carried here.
+The other is ``winclip_accurate``, following zqhang/Accurate-WinCLIP-pytorch,
+and the two disagree on the prompt ensemble, the backbone weights, the window
+geometry and - most consequentially - how an image is scored. They are kept as
+separate target models rather than merged; see ``winclip_accurate`` for the
+side-by-side.
+"""
 
 from __future__ import annotations
 
@@ -54,7 +62,7 @@ def _import_official_repository(repository: str | Path):
 @register_adapter("win-clip")
 @register_adapter("winclip")
 class WinCLIPAdapter(ModelAdapter):
-    """Official WinCLIP zero-shot inference for MVTec AD and VisA.
+    """caoyunkang/WinClip zero-shot inference for MVTec AD and VisA.
 
     Follows eval_WinCLIP.py at its defaults: the ``ViT-B-16-plus-240`` backbone
     with ``laion400m_e32`` weights, 240-pixel inputs, window scales (2, 3), and

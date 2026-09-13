@@ -16,6 +16,7 @@ from . import afclip as _afclip  # noqa: F401
 from . import cops as _cops  # noqa: F401
 from . import mrad as _mrad  # noqa: F401
 from . import winclip as _winclip  # noqa: F401
+from . import winclip_accurate as _winclip_accurate  # noqa: F401
 from . import subspacead as _subspacead  # noqa: F401
 from . import inpformer as _inpformer  # noqa: F401
 from . import fade as _fade  # noqa: F401
