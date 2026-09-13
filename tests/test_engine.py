@@ -84,12 +84,6 @@ def test_end_to_end_fixed_cohort(tmp_path):
     assert row["prompt_ensemble_sha256"] == "b6b0fa61c07f2994"
     assert row["prompt_checkpoint_sha256"] == ""
     assert "prompt_provenance" not in row
-    # Written last, so adding them left the familiar column order intact.
-    assert list(row)[-2:] == ["prompt_ensemble_sha256", "prompt_checkpoint_sha256"]
-    for name in ("category_metrics.csv", "per_image.csv"):
-        with (output / name).open(newline="") as handle:
-            header = next(csv.reader(handle))
-        assert header[-2:] == ["prompt_ensemble_sha256", "prompt_checkpoint_sha256"], name
     assert float(row["clean_i_auroc"]) == 100.0
     with (output / "per_image.csv").open(newline="") as handle:
         images = list(csv.DictReader(handle))

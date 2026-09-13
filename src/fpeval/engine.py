@@ -217,29 +217,6 @@ def _write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
         writer.writerows(rows)
 
 
-# Which prompts produced the perturbations. The setup ID names the prompt family
-# but not its contents, so two runs can share every other column and still be
-# different attacks: a frozen run before and after an ensemble change, or two
-# learnable runs on different checkpoints. A frozen run hashes the ensemble it
-# encoded and a learnable run the checkpoint it loaded, so one of the pair is
-# empty either way. They are written last, after the metrics, so adding them
-# leaves the familiar column order untouched.
-PROMPT_PROVENANCE_FIELDS = ("prompt_ensemble_sha256", "prompt_checkpoint_sha256")
-
-
-def _move_provenance_last(*row_groups: list[dict[str, Any]]) -> None:
-    """Re-insert the provenance keys so they end up as the final columns.
-
-    ``_write_csv`` takes its header from the rows' insertion order, and every
-    row starts from the shared condition fields.
-    """
-    for rows in row_groups:
-        for row in rows:
-            for name in PROMPT_PROVENANCE_FIELDS:
-                if name in row:
-                    row[name] = row.pop(name)
-
-
 def _condition_fields(attack: Attack) -> dict[str, Any]:
     names = (
         "prompt_mode", "setup_id", "source_dataset", "target_dataset", "scope",
@@ -252,7 +229,12 @@ def _condition_fields(attack: Attack) -> dict[str, Any]:
         "optimization_epochs", "optimization_steps",
         "attack_train_fraction",
         "margin_topk_fraction",
-        *PROMPT_PROVENANCE_FIELDS,
+        # Which prompts produced the perturbations. The setup ID names the
+        # prompt family but not its contents, so two runs can share every other
+        # column and still be different attacks: a frozen run before and after
+        # an ensemble change, or two learnable runs on different checkpoints.
+        # One of the pair is empty in either mode.
+        "prompt_ensemble_sha256", "prompt_checkpoint_sha256",
         "normal_local_target",
         "normal_target_region_fraction", "normal_target_center_x",
         "normal_target_center_y",
@@ -599,7 +581,6 @@ def _evaluate_condition(
         "clean_maps": np.stack([clean_cache[sample.protocol_id][1] for sample in cohort]),
         "adversarial_maps": np.stack([adversarial[sample.protocol_id][1] for sample in cohort]),
     }
-    _move_provenance_last(summary_rows, category_rows, per_image_rows)
     return summary_rows, category_rows, per_image_rows, predictions, delta, delta_index
 
 
