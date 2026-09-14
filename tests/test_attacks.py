@@ -119,6 +119,80 @@ def test_cross_dataset_scope_uses_the_whole_target_cohort(tmp_path):
     assert attack.record["tensor_key"] == "delta"
 
 
+def test_full_cross_dataset_combines_both_protocol_partitions(tmp_path):
+    bundle = _write_bundle(
+        tmp_path, setup="ep1_eps2_full", prompt_mode="frozen_prompt"
+    )
+    protocol_fields = ["protocol_id", "dataset", "category", "label", "partition"]
+    with (bundle / "evaluation_test_indices.csv").open("w", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=protocol_fields)
+        writer.writeheader()
+        writer.writerows([
+            {"protocol_id": "test/visa/candle/normal/000", "dataset": "visa",
+             "category": "candle", "label": 0, "partition": "evaluation"},
+            {"protocol_id": "test/visa/candle/anomaly/001", "dataset": "visa",
+             "category": "candle", "label": 1, "partition": "evaluation"},
+        ])
+    with (bundle / "attack_train_indices.csv").open("w", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=protocol_fields)
+        writer.writeheader()
+        writer.writerows([
+            {"protocol_id": "test/visa/candle/normal/002", "dataset": "visa",
+             "category": "candle", "label": 0, "partition": "attack_train"},
+            {"protocol_id": "test/visa/candle/anomaly/003", "dataset": "visa",
+             "category": "candle", "label": 1, "partition": "attack_train"},
+        ])
+    manifest = bundle / "attack_manifest.csv"
+    rows = list(csv.DictReader(manifest.open(newline="")))
+    fields = list(rows[0]) + ["split_protocol"]
+    rows[0].update({
+        "scope": "cross_dataset", "source_dataset": "mvtec",
+        "target_dataset": "visa", "evaluation_attacked_image_count": "2",
+        "split_protocol": "full",
+    })
+    with manifest.open("w", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fields)
+        writer.writeheader()
+        writer.writerows(rows)
+
+    attacks = discover_attacks([bundle], scopes=("cross_dataset",), targets=("visa",))
+
+    assert len(attacks) == 1
+    assert attacks[0].record["split_protocol"] == "full"
+    assert attacks[0].evaluation_ids == (
+        "test/visa/candle/normal/002",
+        "test/visa/candle/anomaly/003",
+        "test/visa/candle/normal/000",
+        "test/visa/candle/anomaly/001",
+    )
+    assert attacks[0].attacked_ids == (
+        "test/visa/candle/normal/002",
+        "test/visa/candle/normal/000",
+    )
+
+
+def test_full_non_cross_dataset_still_uses_only_evaluation_partition(tmp_path):
+    bundle = _write_bundle(
+        tmp_path, setup="ep1_eps2_full", prompt_mode="frozen_prompt"
+    )
+    with (bundle / "attack_train_indices.csv").open("w", newline="") as handle:
+        writer = csv.DictWriter(
+            handle,
+            fieldnames=["protocol_id", "dataset", "category", "label", "partition"],
+        )
+        writer.writeheader()
+        writer.writerow({
+            "protocol_id": "test/bottle/good/002", "dataset": "mvtec",
+            "category": "bottle", "label": 0, "partition": "attack_train",
+        })
+
+    attacks = discover_attacks([bundle], scopes=("per_dataset",), targets=("mvtec",))
+
+    assert len(attacks) == 1
+    assert len(attacks[0].evaluation_ids) == 2
+    assert attacks[0].attacked_ids == ("test/bottle/good/000",)
+
+
 def test_setup_id_normalization_covers_the_generator_grammar(tmp_path):
     """Mirror setup_catalog.compose_setup_id.
 

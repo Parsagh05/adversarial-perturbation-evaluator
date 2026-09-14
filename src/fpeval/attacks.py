@@ -139,6 +139,28 @@ def _read_csv(path: Path) -> list[dict[str, str]]:
     return rows
 
 
+def _protocol_path(bundle: Path, filename: str) -> Path:
+    """Resolve one protocol CSV from either the scope or setup directory."""
+
+    direct = bundle / filename
+    if direct.is_file():
+        return direct
+    candidates = [
+        path for path in bundle.parent.rglob(filename) if "protocol" in path.parts
+    ]
+    if len(candidates) == 1:
+        return candidates[0]
+    return direct
+
+
+def _validate_protocol(rows: list[dict[str, str]]) -> None:
+    required = {"protocol_id", "dataset", "category", "label", "partition"}
+    if not required.issubset(rows[0]):
+        raise ValueError(
+            f"Protocol is missing columns: {sorted(required - set(rows[0]))}"
+        )
+
+
 def _field(row: dict[str, str], *names: str, required: bool = True, default: str = "") -> str:
     for name in names:
         value = str(row.get(name, "")).strip()
@@ -246,16 +268,11 @@ def discover_attacks(
     seen: dict[str, Attack] = {}
     for bundle in bundles:
         prompt_mode, setup_id = _metadata(bundle)
-        protocol_path = bundle / "evaluation_test_indices.csv"
-        if not protocol_path.is_file():
-            candidates = list(bundle.parent.rglob("evaluation_test_indices.csv"))
-            candidates = [path for path in candidates if "protocol" in path.parts]
-            if len(candidates) == 1:
-                protocol_path = candidates[0]
-        protocol = _read_csv(protocol_path)
-        required_protocol = {"protocol_id", "dataset", "category", "label", "partition"}
-        if not required_protocol.issubset(protocol[0]):
-            raise ValueError(f"Protocol is missing columns: {sorted(required_protocol - set(protocol[0]))}")
+        evaluation_protocol = _read_csv(
+            _protocol_path(bundle, "evaluation_test_indices.csv")
+        )
+        _validate_protocol(evaluation_protocol)
+        attack_train_protocol: list[dict[str, str]] | None = None
         for raw in _read_csv(bundle / "attack_manifest.csv"):
             scope_raw = _field(raw, "scope").lower()
             try:
@@ -273,6 +290,10 @@ def discover_attacks(
             formulation = _field(
                 raw, "loss_formulation", required=False, default=inferred_formulation
             )
+            split_protocol = _field(
+                raw, "split_protocol", required=False,
+                default="full" if "_full" in setup_id.lower() else "balanced",
+            ).lower()
             loss_mode = _field(raw, "loss_mode", "objective")
             normalized = {
                 **raw, "prompt_mode": prompt_mode, "setup_id": setup_id,
@@ -280,6 +301,7 @@ def discover_attacks(
                 "direction": direction, "source_label": source_label,
                 "target_label": target_label, "category": category,
                 "loss_formulation": formulation, "loss_mode": loss_mode,
+                "split_protocol": split_protocol,
                 "image_size": int(_field(raw, "image_size")),
                 "epsilon": float(_field(raw, "epsilon")),
                 "tensor_key": _field(raw, "noise_tensor_key", "tensor_key", required=False,
@@ -288,11 +310,29 @@ def discover_attacks(
             }
             if any(allowed is not None and str(normalized[name]) not in allowed for name, allowed in filters.items()):
                 continue
-            cohort = [
-                row for row in protocol
-                if row["dataset"] == target and row["partition"] == "evaluation"
-                and (scope in DATASET_LEVEL_SCOPES or row["category"] == category)
-            ]
+            full_cross_dataset = (
+                scope == "cross_dataset"
+                and source != target
+                and split_protocol == "full"
+            )
+            if full_cross_dataset:
+                if attack_train_protocol is None:
+                    attack_train_protocol = _read_csv(
+                        _protocol_path(bundle, "attack_train_indices.csv")
+                    )
+                    _validate_protocol(attack_train_protocol)
+                protocol_rows = [*attack_train_protocol, *evaluation_protocol]
+                cohort = [
+                    row for row in protocol_rows
+                    if row["dataset"] == target
+                    and (scope in DATASET_LEVEL_SCOPES or row["category"] == category)
+                ]
+            else:
+                cohort = [
+                    row for row in evaluation_protocol
+                    if row["dataset"] == target and row["partition"] == "evaluation"
+                    and (scope in DATASET_LEVEL_SCOPES or row["category"] == category)
+                ]
             if not cohort:
                 raise ValueError(f"No evaluation cohort for {target}/{category or 'all'}")
             evaluation_ids = tuple(row["protocol_id"] for row in cohort)
