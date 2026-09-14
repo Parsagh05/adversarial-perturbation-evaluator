@@ -9,7 +9,8 @@ from typing import Any
 
 @dataclass
 class EvaluationConfig:
-    attacks_root: str
+    # None only with clean_only: there is no attack to point at.
+    attacks_root: str | None
     output_root: str
     model_kwargs_by_target: dict[str, dict[str, Any]]
     model: str = "anomalyclip"
@@ -51,6 +52,12 @@ class EvaluationConfig:
     create_output_archives: bool = True
     overwrite: bool = False
     max_conditions: int | None = None
+    # Score the clean cohort and stop: no perturbations are loaded and no
+    # adversarial columns are written, so nothing has to be invented to
+    # satisfy the manifest. With attacks_root the cohort is the protocol's
+    # fixed evaluation split, which is what an attacked run scores; without
+    # it the cohort is the whole mounted test split.
+    clean_only: bool = False
     run_metadata: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
@@ -94,7 +101,12 @@ class EvaluationConfig:
             raise ValueError("max_conditions must be positive")
         if self.max_sample_conditions is not None and self.max_sample_conditions < 1:
             raise ValueError("max_sample_conditions must be positive")
-        if not Path(self.attacks_root).expanduser().exists():
+        if self.attacks_root is None:
+            if not self.clean_only:
+                raise ValueError(
+                    "attacks_root is required unless clean_only is set"
+                )
+        elif not Path(self.attacks_root).expanduser().exists():
             raise FileNotFoundError(f"attacks_root does not exist: {self.attacks_root}")
         if "mvtec" in self.targets and not self.mvtec_root:
             raise ValueError("mvtec_root is required when evaluating MVTec")

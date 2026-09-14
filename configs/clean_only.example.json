@@ -1,0 +1,31 @@
+{
+  "attacks_root": null,
+  "output_root": "/path/to/results",
+  "model": "anomalyclip",
+  "mvtec_root": "/path/to/mvtec_anomaly_detection",
+  "visa_root": "/path/to/VisA_20220922",
+  "targets": [
+    "mvtec",
+    "visa"
+  ],
+  "clean_only": true,
+  "model_kwargs_by_target": {
+    "mvtec": {
+      "repository": "/path/to/AnomalyCLIP",
+      "target_dataset": "mvtec"
+    },
+    "visa": {
+      "repository": "/path/to/AnomalyCLIP",
+      "target_dataset": "visa"
+    }
+  },
+  "device": "cuda",
+  "batch_size": 8,
+  "image_size": 518,
+  "gaussian_sigma": 4.0,
+  "pixel_threshold_modes": [
+    "fixed_0_5",
+    "image_f1",
+    "clean_pixel_f1"
+  ]
+}

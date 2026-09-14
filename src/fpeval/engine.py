@@ -251,6 +251,91 @@ def _condition_fields(attack: Attack) -> dict[str, Any]:
     return {name: attack.record.get(name, "") for name in names}
 
 
+def _clean_only_rows(
+    target: str,
+    samples: list[Sample],
+    clean: dict[str, Prediction],
+    thresholds: dict[str, dict[str, float]],
+    config: EvaluationConfig,
+    cohort_source: str,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
+    """Score the clean cohort with no attack in the picture.
+
+    Only ``clean_*`` columns are produced. The attack axes - setup, direction,
+    loss, prompt mode - describe a perturbation that does not exist here, so
+    they are absent rather than filled with placeholders, and the row carries
+    ``cohort`` so a clean run over the whole split is never mistaken for one
+    over a protocol's evaluation half.
+    """
+    summary_rows: list[dict[str, Any]] = []
+    category_rows: list[dict[str, Any]] = []
+    per_image_rows: list[dict[str, Any]] = []
+    categories = sorted({sample.category for sample in samples})
+
+    for pixel_mode in config.pixel_threshold_modes:
+        for category in categories:
+            cohort = [sample for sample in samples if sample.category == category]
+            labels = np.asarray([sample.label for sample in cohort], dtype=np.uint8)
+            scores = np.asarray(
+                [clean[sample.protocol_id][0] for sample in cohort], dtype=np.float32
+            )
+            maps = _resize_maps(
+                [clean[sample.protocol_id][1] for sample in cohort],
+                config.image_size, config.gaussian_sigma,
+            )
+            masks = np.stack(
+                [load_mask(sample, config.image_size) for sample in cohort]
+            )
+            image = performance(labels, scores)
+            pixel = pixel_performance(
+                masks, maps,
+                fpr_limit=config.aupro_fpr_limit, thresholds=config.aupro_thresholds,
+            )
+            image_threshold = thresholds[category]["image_f1"]
+            decisions = (scores >= image_threshold).astype(np.uint8)
+            base = {
+                "model": config.model, "target_dataset": target,
+                "cohort": cohort_source, "category": category,
+                "pixel_threshold_mode": pixel_mode,
+                "sample_count": len(cohort),
+                "clean_i_auroc": image["auroc"], "clean_i_ap": image["ap"],
+                "clean_i_f1_max": image["f1_max"],
+                "clean_p_auroc": pixel["p_auroc"], "clean_p_f1_max": pixel["p_f1_max"],
+                "clean_aupro": pixel["aupro"],
+                **{f"clean_{name}": value
+                   for name, value in classification(labels, decisions).items()},
+            }
+            category_rows.append(dict(base))
+            for sample, score in zip(cohort, scores):
+                per_image_rows.append({
+                    "model": config.model, "target_dataset": target,
+                    "cohort": cohort_source, "category": category,
+                    "pixel_threshold_mode": pixel_mode,
+                    "protocol_id": sample.protocol_id,
+                    "defect_type": sample.defect_type, "label": sample.label,
+                    "clean_score": float(score),
+                })
+
+        rows = [row for row in category_rows
+                if row["pixel_threshold_mode"] == pixel_mode]
+        summary = {
+            "model": config.model, "target_dataset": target,
+            "cohort": cohort_source, "category": "__macro__",
+            "pixel_threshold_mode": pixel_mode,
+            "category_count": len(rows),
+            "sample_count": sum(int(row["sample_count"]) for row in rows),
+        }
+        summary.update({
+            name: _mean(rows, name) for name in (
+                "clean_i_auroc", "clean_i_ap", "clean_i_f1_max",
+                "clean_p_auroc", "clean_p_f1_max", "clean_aupro",
+                "clean_accuracy", "clean_fpr", "clean_fnr",
+            )
+        })
+        summary_rows.append(summary)
+    return summary_rows, category_rows, per_image_rows
+
+
 def _calibrate_clean(
     target: str,
     samples: list[Sample],
@@ -605,15 +690,19 @@ def evaluate(config: EvaluationConfig) -> Path:
     if existing.exists() and not config.overwrite:
         raise FileExistsError(f"Results already exist: {existing}; set overwrite=true")
     output.mkdir(parents=True, exist_ok=True)
-    cache = Path(config.extraction_cache).expanduser().resolve() if config.extraction_cache else output / "extracted_attacks"
-    bundles = materialize_input(config.attacks_root, cache)
-    attacks = discover_attacks(
-        bundles, scopes=config.scopes, targets=config.targets,
-        prompt_modes=config.prompt_modes, setup_ids=config.setup_ids,
-        sources=config.source_datasets, categories=config.categories,
-        directions=config.directions, loss_modes=config.loss_modes,
-        loss_formulations=config.loss_formulations,
-    )
+    if config.attacks_root is None:
+        # clean_only without a manifest: the cohort is the mounted test split.
+        attacks: list[Attack] = []
+    else:
+        cache = Path(config.extraction_cache).expanduser().resolve() if config.extraction_cache else output / "extracted_attacks"
+        bundles = materialize_input(config.attacks_root, cache)
+        attacks = discover_attacks(
+            bundles, scopes=config.scopes, targets=config.targets,
+            prompt_modes=config.prompt_modes, setup_ids=config.setup_ids,
+            sources=config.source_datasets, categories=config.categories,
+            directions=config.directions, loss_modes=config.loss_modes,
+            loss_formulations=config.loss_formulations,
+        )
     if config.max_conditions:
         attacks = attacks[: config.max_conditions]
     all_summary: list[dict[str, Any]] = []
@@ -625,15 +714,27 @@ def evaluate(config: EvaluationConfig) -> Path:
     sample_budget = _SampleBudget(config.max_sample_conditions)
     for target in config.targets:
         target_attacks = [attack for attack in attacks if attack.record["target_dataset"] == target]
-        if not target_attacks:
+        if not target_attacks and not config.clean_only:
             continue
         discovered = discover_dataset(target, mvtec_root=config.mvtec_root, visa_root=config.visa_root)
         indexed = sample_index(discovered)
-        required_ids = list(dict.fromkeys(sample_id for attack in target_attacks for sample_id in attack.evaluation_ids))
-        missing = [sample_id for sample_id in required_ids if sample_id not in indexed]
-        if missing:
-            raise ValueError(f"Protocol IDs are absent from {target}: {missing[:5]}")
-        fixed_samples = [indexed[sample_id] for sample_id in required_ids]
+        if target_attacks:
+            cohort_source = "protocol_evaluation_split"
+            required_ids = list(dict.fromkeys(sample_id for attack in target_attacks for sample_id in attack.evaluation_ids))
+            missing = [sample_id for sample_id in required_ids if sample_id not in indexed]
+            if missing:
+                raise ValueError(f"Protocol IDs are absent from {target}: {missing[:5]}")
+            fixed_samples = [indexed[sample_id] for sample_id in required_ids]
+        else:
+            # clean_only with no manifest: score everything mounted, which is
+            # the split published numbers are computed over.
+            cohort_source = "full_test_split"
+            fixed_samples = list(discovered)
+            if config.categories:
+                wanted = set(config.categories)
+                fixed_samples = [s for s in fixed_samples if s.category in wanted]
+            if not fixed_samples:
+                raise ValueError(f"No {target} samples to score")
         kwargs = dict(config.model_kwargs_by_target[target])
         kwargs.setdefault("device", config.device)
         kwargs.setdefault("image_size", config.image_size)
@@ -647,6 +748,14 @@ def evaluate(config: EvaluationConfig) -> Path:
             thresholds = _calibrate_clean(target, fixed_samples, clean, config)
             clean_metrics: dict[tuple[str, ...], dict[str, dict[str, float]]] = {}
             threshold_payload["targets"][target] = thresholds
+            if config.clean_only:
+                summary, categories, images = _clean_only_rows(
+                    target, fixed_samples, clean, thresholds, config, cohort_source
+                )
+                all_summary.extend(summary)
+                all_categories.extend(categories)
+                all_images.extend(images)
+                continue
             for attack in target_attacks:
                 summary, categories, images, predictions, delta, delta_index = _evaluate_condition(
                     attack, indexed, raw_clean, adapter, thresholds, config,
@@ -719,7 +828,11 @@ def evaluate(config: EvaluationConfig) -> Path:
     (output / "manifest_snapshot.json").write_text(
         json.dumps(manifest_snapshot, indent=2, default=_json_value), encoding="utf-8"
     )
-    if config.write_separated_results:
+    # The separated tree and the qualitative samples are both filed under the
+    # setup and prompt mode of an attack, so a clean-only run has nowhere to put
+    # them and produces the consolidated directory alone.
+    separated = config.write_separated_results and not config.clean_only
+    if separated:
         write_separated_numerical(
             structured_output,
             summary_rows=all_summary,
@@ -732,8 +845,8 @@ def evaluate(config: EvaluationConfig) -> Path:
     if config.create_output_archives:
         # Extraction is a disposable input cache, not an evaluation result.
         archive_directory(output, exclude_top_level=("extracted_attacks",))
-        if config.save_qualitative_samples:
+        if config.save_qualitative_samples and not config.clean_only:
             archive_directory(structured_samples_output)
-        if config.write_separated_results:
+        if separated:
             archive_directory(structured_output)
     return output

@@ -110,6 +110,31 @@ Thresholds are calibrated only from the clean fixed evaluation cohort and then
 frozen. Because this uses labeled evaluation data, these are benchmark oracle
 operating points, not deployment calibration.
 
+## Clean-only runs
+
+`clean_only: true` scores the cohort and stops. No perturbation is loaded, no
+adversarial pass runs, and only `clean_*` columns are written - the attack axes
+(`setup_id`, `prompt_mode`, `direction`, `loss_mode`) describe something that
+does not exist in such a run, so they are absent rather than filled in. It is
+the supported way to measure a model's clean performance; previously that meant
+generating a throwaway perturbation purely to satisfy the manifest requirement
+and then ignoring every adversarial column it produced.
+
+`attacks_root` is optional here, and which cohort is scored follows from it:
+
+- **omitted (`null`)** - the whole mounted test split, `cohort=full_test_split`.
+  This is the split published numbers are computed over, so it is the one to use
+  when comparing against a paper.
+- **provided** - the protocol's fixed evaluation half, exactly the images an
+  attacked run scores, `cohort=protocol_evaluation_split`. Use this to read clean
+  numbers that line up with adversarial results from the same bundle.
+
+The two are different images and generally different numbers, so every row
+carries a `cohort` column and the two can never be silently pooled. Thresholds
+are still calibrated and written to `thresholds.json`. The separated tree and the
+qualitative samples are filed under a setup and prompt mode, so a clean-only run
+produces the consolidated directory alone. See `configs/clean_only.example.json`.
+
 ## Official model defaults
 
 AnomalyCLIP uses the official `ViT-L/14@336px` path, 518-pixel inputs, seed
