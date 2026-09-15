@@ -14,7 +14,8 @@ SETUP_PATTERN = re.compile(
     rf"(?:_cat{_NUMBER}_img{_NUMBER})?"
     rf"_eps{_NUMBER}"
     rf"(?:_ce_focal_dice|_margin_topk)?"
-    rf"(?:_full)?(?:_train{_NUMBER})?(?:_learnable_prompt)?",
+    rf"(?:_full(?!cross))?(?:_fullcross|_halfcross)?"
+    rf"(?:_train{_NUMBER})?(?:_learnable_prompt)?",
     re.IGNORECASE,
 )
 

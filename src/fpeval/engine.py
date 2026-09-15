@@ -243,6 +243,11 @@ def _condition_fields(attack: Attack) -> dict[str, Any]:
         # image. The two are different cohorts, so a result that does not name
         # its protocol cannot be compared with one that used the other.
         "split_protocol",
+        # Cross-dataset cohort selection is independent of split_protocol.
+        # Current generator manifests make both source and target partition
+        # policies explicit so fullcross and halfcross remain auditable.
+        "full_data_cross", "cross_data_mode", "source_partition_policy",
+        "target_partition_policy", "evaluation_ids_source",
         # Under the full protocol cross-dataset optimises over the complete
         # source dataset rather than reusing the per-dataset delta, so this
         # distinguishes the attack-train partition from the whole dataset.

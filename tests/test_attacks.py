@@ -119,9 +119,15 @@ def test_cross_dataset_scope_uses_the_whole_target_cohort(tmp_path):
     assert attack.record["tensor_key"] == "delta"
 
 
-def test_full_cross_dataset_combines_both_protocol_partitions(tmp_path):
+@pytest.mark.parametrize("split_protocol", ["balanced", "full"])
+def test_full_cross_dataset_combines_both_protocol_partitions(
+    tmp_path, split_protocol
+):
+    protocol_tag = "_full" if split_protocol == "full" else ""
     bundle = _write_bundle(
-        tmp_path, setup="ep1_eps2_full", prompt_mode="frozen_prompt"
+        tmp_path,
+        setup=f"ep1_eps2{protocol_tag}_fullcross",
+        prompt_mode="frozen_prompt",
     )
     protocol_fields = ["protocol_id", "dataset", "category", "label", "partition"]
     with (bundle / "evaluation_test_indices.csv").open("w", newline="") as handle:
@@ -144,11 +150,11 @@ def test_full_cross_dataset_combines_both_protocol_partitions(tmp_path):
         ])
     manifest = bundle / "attack_manifest.csv"
     rows = list(csv.DictReader(manifest.open(newline="")))
-    fields = list(rows[0]) + ["split_protocol"]
+    fields = list(rows[0]) + ["split_protocol", "full_data_cross"]
     rows[0].update({
         "scope": "cross_dataset", "source_dataset": "mvtec",
         "target_dataset": "visa", "evaluation_attacked_image_count": "2",
-        "split_protocol": "full",
+        "split_protocol": split_protocol, "full_data_cross": "true",
     })
     with manifest.open("w", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=fields)
@@ -158,7 +164,8 @@ def test_full_cross_dataset_combines_both_protocol_partitions(tmp_path):
     attacks = discover_attacks([bundle], scopes=("cross_dataset",), targets=("visa",))
 
     assert len(attacks) == 1
-    assert attacks[0].record["split_protocol"] == "full"
+    assert attacks[0].record["split_protocol"] == split_protocol
+    assert attacks[0].record["full_data_cross"] is True
     assert attacks[0].evaluation_ids == (
         "test/visa/candle/normal/002",
         "test/visa/candle/anomaly/003",
@@ -169,6 +176,56 @@ def test_full_cross_dataset_combines_both_protocol_partitions(tmp_path):
         "test/visa/candle/normal/002",
         "test/visa/candle/normal/000",
     )
+
+
+@pytest.mark.parametrize("split_protocol", ["balanced", "full"])
+def test_half_cross_dataset_uses_only_evaluation_partition(
+    tmp_path, split_protocol
+):
+    protocol_tag = "_full" if split_protocol == "full" else ""
+    bundle = _write_bundle(
+        tmp_path,
+        setup=f"ep1_eps2{protocol_tag}_halfcross",
+        prompt_mode="frozen_prompt",
+    )
+    protocol_fields = ["protocol_id", "dataset", "category", "label", "partition"]
+    with (bundle / "evaluation_test_indices.csv").open("w", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=protocol_fields)
+        writer.writeheader()
+        writer.writerows([
+            {"protocol_id": "test/visa/candle/normal/000", "dataset": "visa",
+             "category": "candle", "label": 0, "partition": "evaluation"},
+            {"protocol_id": "test/visa/candle/anomaly/001", "dataset": "visa",
+             "category": "candle", "label": 1, "partition": "evaluation"},
+        ])
+    with (bundle / "attack_train_indices.csv").open("w", newline="") as handle:
+        writer = csv.DictWriter(
+            handle, fieldnames=protocol_fields,
+        )
+        writer.writeheader()
+        writer.writerow({
+            "protocol_id": "test/visa/candle/normal/002", "dataset": "visa",
+            "category": "candle", "label": 0, "partition": "attack_train",
+        })
+    manifest = bundle / "attack_manifest.csv"
+    rows = list(csv.DictReader(manifest.open(newline="")))
+    fields = list(rows[0]) + ["split_protocol", "full_data_cross"]
+    rows[0].update({
+        "scope": "cross_dataset", "source_dataset": "mvtec",
+        "target_dataset": "visa", "split_protocol": split_protocol,
+        "full_data_cross": "false",
+    })
+    with manifest.open("w", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fields)
+        writer.writeheader()
+        writer.writerows(rows)
+
+    attacks = discover_attacks([bundle], scopes=("cross_dataset",), targets=("visa",))
+
+    assert len(attacks) == 1
+    assert attacks[0].record["full_data_cross"] is False
+    assert len(attacks[0].evaluation_ids) == 2
+    assert attacks[0].attacked_ids == ("test/visa/candle/normal/000",)
 
 
 def test_full_non_cross_dataset_still_uses_only_evaluation_partition(tmp_path):
@@ -196,7 +253,8 @@ def test_full_non_cross_dataset_still_uses_only_evaluation_partition(tmp_path):
 def test_setup_id_normalization_covers_the_generator_grammar(tmp_path):
     """Mirror setup_catalog.compose_setup_id.
 
-    ep{E}[_cat{C}_img{I}]_eps{E}[_margin_topk][_full][_train{P}][_learnable_prompt],
+    ep{E}[_cat{C}_img{I}]_eps{E}[_margin_topk][_full]
+    [_fullcross|_halfcross][_train{P}][_learnable_prompt],
     where the budget and epsilon grids are swept and any number may be
     fractional with a decimal point written "p". The historical steps{N}
     spelling still parses. _metadata reads only the path, so the bundle does not
@@ -245,6 +303,14 @@ def test_setup_id_normalization_covers_the_generator_grammar(tmp_path):
          "ep7p14_cat100_img100_eps2_margin_topk"),
         ("ep100_eps4_margin_topk_full", "frozen_prompt",
          "ep100_eps4_margin_topk_full"),
+        ("ep100_eps4_fullcross", "frozen_prompt",
+         "ep100_eps4_fullcross"),
+        ("ep100_eps4_halfcross", "frozen_prompt",
+         "ep100_eps4_halfcross"),
+        ("ep100_eps4_full_fullcross", "frozen_prompt",
+         "ep100_eps4_full_fullcross"),
+        ("ep100_eps4_full_halfcross_train20_learnable_prompt",
+         "learnable_prompt", "ep100_eps4_full_halfcross_train20"),
         ("ep0p5_cat2_img10_eps0p02_margin_topk_train12p5_learnable_prompt",
          "learnable_prompt",
          "ep0p5_cat2_img10_eps0p02_margin_topk_train12p5"),

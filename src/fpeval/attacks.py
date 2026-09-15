@@ -29,7 +29,8 @@ SCOPE_NAMES = {
 # here.
 DATASET_LEVEL_SCOPES = frozenset({"per_dataset", "cross_dataset"})
 DIRECTION_LABELS = {"normal_to_abnormal": (0, 1), "abnormal_to_normal": (1, 0)}
-# ep{E}[_cat{C}_img{I}]_eps{E}[_ce_focal_dice][_full][_train{P}][_learnable_prompt],
+# ep{E}[_cat{C}_img{I}]_eps{E}[_ce_focal_dice][_full]
+# [_fullcross|_halfcross][_train{P}][_learnable_prompt],
 # matching setup_catalog.compose_setup_id. Every number may be fractional, with
 # "p" for the decimal point (ep7p14, eps0p02, train12p5).
 #
@@ -51,7 +52,8 @@ SETUP_PATTERN = re.compile(
     rf"(?:_cat{_NUMBER}_img{_NUMBER})?"
     rf"_eps{_NUMBER}"
     rf"(?:_ce_focal_dice|_margin_topk)?"
-    rf"(?:_full)?(?:_train{_NUMBER})?(?:_learnable_prompt)?",
+    rf"(?:_full(?!cross))?(?:_fullcross|_halfcross)?"
+    rf"(?:_train{_NUMBER})?(?:_learnable_prompt)?",
     re.I,
 )
 
@@ -169,6 +171,29 @@ def _field(row: dict[str, str], *names: str, required: bool = True, default: str
     if required:
         raise ValueError(f"Manifest is missing one of these fields: {names}")
     return default
+
+
+def _full_data_cross(
+    row: dict[str, str], setup_id: str, split_protocol: str
+) -> bool:
+    """Resolve the cross-data cohort switch, preserving legacy bundles.
+
+    Current generators record the boolean directly and also name the mode in
+    the setup ID. Older full-protocol bundles predate that independent switch,
+    so only those untagged bundles retain the former ``split=full`` inference.
+    """
+
+    value = str(row.get("full_data_cross", "")).strip().lower()
+    if value:
+        if value not in {"true", "false"}:
+            raise ValueError(f"Invalid full_data_cross value: {value!r}")
+        return value == "true"
+    lowered = setup_id.lower()
+    if "_fullcross" in lowered:
+        return True
+    if "_halfcross" in lowered:
+        return False
+    return split_protocol == "full"
 
 
 def _artifact_path(bundle: Path, recorded: str) -> Path:
@@ -292,8 +317,16 @@ def discover_attacks(
             )
             split_protocol = _field(
                 raw, "split_protocol", required=False,
-                default="full" if "_full" in setup_id.lower() else "balanced",
+                default=(
+                    "full"
+                    if re.search(r"_full(?:_|$)", setup_id.lower())
+                    else "balanced"
+                ),
             ).lower()
+            full_data_cross = (
+                _full_data_cross(raw, setup_id, split_protocol)
+                if scope == "cross_dataset" else None
+            )
             loss_mode = _field(raw, "loss_mode", "objective")
             normalized = {
                 **raw, "prompt_mode": prompt_mode, "setup_id": setup_id,
@@ -302,6 +335,9 @@ def discover_attacks(
                 "target_label": target_label, "category": category,
                 "loss_formulation": formulation, "loss_mode": loss_mode,
                 "split_protocol": split_protocol,
+                "full_data_cross": (
+                    full_data_cross if full_data_cross is not None else ""
+                ),
                 "image_size": int(_field(raw, "image_size")),
                 "epsilon": float(_field(raw, "epsilon")),
                 "tensor_key": _field(raw, "noise_tensor_key", "tensor_key", required=False,
@@ -313,7 +349,7 @@ def discover_attacks(
             full_cross_dataset = (
                 scope == "cross_dataset"
                 and source != target
-                and split_protocol == "full"
+                and full_data_cross is True
             )
             if full_cross_dataset:
                 if attack_train_protocol is None:

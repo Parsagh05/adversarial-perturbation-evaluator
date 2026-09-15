@@ -2,8 +2,8 @@
 
 This repository is a fresh, model-extensible black-box evaluation pipeline for
 the perturbation datasets produced by the object-agnostic prompt experiments.
-It does not generate or optimize attacks. The perturbation manifest and the
-fixed `evaluation_test_indices.csv` are always authoritative.
+It does not generate or optimize attacks. The perturbation manifest and its
+fixed protocol CSVs are always authoritative.
 
 The target adapters are AnomalyCLIP, AA-CLIP, AdaCLIP, FAPrompt, Crane,
 APRIL-GAN, FB-CLIP, Tipsomaly, VCP-CLIP, FiLo, Bayes-PFL, AF-CLIP, CoPS, MRAD
@@ -30,12 +30,14 @@ setups/{frozen_prompt,learnable_prompt}/<setup_id>/
   canonical_clip_per_image/
 ```
 
-`per_dataset` and `cross_dataset` are dataset-level scopes evaluated over the
-full target cohort, differing in whether the evaluation dataset is the attack's
-source dataset. Under the balanced split protocol they carry the same universal
-delta; under the full protocol `cross_dataset` optimises its own. Setup IDs
+`per_dataset` and `cross_dataset` are dataset-level scopes. `per_dataset` always
+trains on the source attack-train partition and evaluates on that dataset's
+evaluation partition. Cross-dataset cohort selection is independent of the
+balanced/full split protocol: `_halfcross` reuses that perturbation on the other
+dataset's evaluation partition, while `_fullcross` trains and evaluates on both
+retained partitions of the respective source and target datasets. Setup IDs
 follow
-`ep{E}[_cat{C}_img{I}]_eps{E}[_ce_focal_dice][_full][_train{P}][_learnable_prompt]`,
+`ep{E}[_cat{C}_img{I}]_eps{E}[_ce_focal_dice][_full][_fullcross|_halfcross][_train{P}][_learnable_prompt]`,
 mirroring the generator's `compose_setup_id`. The budget and epsilon grids are
 swept, so neither is a fixed set, and any number may be fractional with a
 decimal point written `p` (`ep7p14`, `eps0p02`, `train12p5`). The generator
@@ -49,9 +51,10 @@ parses, so bundles and results produced before that change keep working.
 was the other way round, which is how a manifest missing `loss_formulation` is
 still read correctly on either side of the change. `_cat{C}_img{I}` appears only
 when the per-category and per-image budgets differ from the per-dataset one, and
-`_full` only under the full
-split protocol, which keeps every test image instead of downsampling each
-category to equal labels; the balanced protocol adds no component. The
+`_full` only under the full split protocol, which keeps every test image instead
+of downsampling each category to equal labels; the balanced protocol adds no
+component. `_fullcross` and `_halfcross` independently record which source and
+target partitions cross-dataset transfer uses. The
 `_train{P}` component appears only when the attack-train fraction is below 1.0,
 and it is preserved: a 20% run and a full run are different setups. Every
 optional component must be parsed, because an unmatched one truncates the ID
@@ -64,6 +67,7 @@ and separate scope ZIPs such as
 
 - `attack_manifest.csv`;
 - `evaluation_test_indices.csv` (directly, or in the setup's `protocol/` folder);
+- `attack_train_indices.csv` for `_fullcross` conditions;
 - the `.pt` perturbations referenced by the manifest.
 
 The reader accepts `noise_file`, `perturbation_file`, `delta_file`, or
