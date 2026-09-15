@@ -67,7 +67,8 @@ and separate scope ZIPs such as
 
 - `attack_manifest.csv`;
 - `evaluation_test_indices.csv` (directly, or in the setup's `protocol/` folder);
-- `attack_train_indices.csv` for `_fullcross` conditions;
+- `complete_retained_indices.csv` for `_fullcross` conditions, containing both
+  partitions for source datasets and evaluation-only targets;
 - the `.pt` perturbations referenced by the manifest.
 
 The reader accepts `noise_file`, `perturbation_file`, `delta_file`, or

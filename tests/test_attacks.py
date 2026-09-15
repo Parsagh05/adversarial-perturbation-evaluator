@@ -143,18 +143,36 @@ def test_full_cross_dataset_combines_both_protocol_partitions(
         writer = csv.DictWriter(handle, fieldnames=protocol_fields)
         writer.writeheader()
         writer.writerows([
+            {"protocol_id": "test/bottle/good/000", "dataset": "mvtec",
+             "category": "bottle", "label": 0, "partition": "attack_train"},
+            {"protocol_id": "test/bottle/crack/001", "dataset": "mvtec",
+             "category": "bottle", "label": 1, "partition": "attack_train"},
+        ])
+    # Unlike attack_train_indices.csv, the complete file contains both halves
+    # of evaluation-only targets such as VisA in a one-way MVTec -> VisA run.
+    with (bundle / "complete_retained_indices.csv").open("w", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=protocol_fields)
+        writer.writeheader()
+        writer.writerows([
             {"protocol_id": "test/visa/candle/normal/002", "dataset": "visa",
              "category": "candle", "label": 0, "partition": "attack_train"},
             {"protocol_id": "test/visa/candle/anomaly/003", "dataset": "visa",
              "category": "candle", "label": 1, "partition": "attack_train"},
+            {"protocol_id": "test/visa/candle/normal/000", "dataset": "visa",
+             "category": "candle", "label": 0, "partition": "evaluation"},
+            {"protocol_id": "test/visa/candle/anomaly/001", "dataset": "visa",
+             "category": "candle", "label": 1, "partition": "evaluation"},
         ])
     manifest = bundle / "attack_manifest.csv"
     rows = list(csv.DictReader(manifest.open(newline="")))
-    fields = list(rows[0]) + ["split_protocol", "full_data_cross"]
+    fields = list(rows[0]) + [
+        "split_protocol", "full_data_cross", "evaluation_ids_source",
+    ]
     rows[0].update({
         "scope": "cross_dataset", "source_dataset": "mvtec",
         "target_dataset": "visa", "evaluation_attacked_image_count": "2",
         "split_protocol": split_protocol, "full_data_cross": "true",
+        "evaluation_ids_source": "complete_retained_indices.csv",
     })
     with manifest.open("w", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=fields)
@@ -176,6 +194,29 @@ def test_full_cross_dataset_combines_both_protocol_partitions(
         "test/visa/candle/normal/002",
         "test/visa/candle/normal/000",
     )
+
+
+def test_full_cross_requires_the_complete_file_when_manifest_names_it(tmp_path):
+    bundle = _write_bundle(
+        tmp_path, setup="ep1_eps2_fullcross", prompt_mode="frozen_prompt"
+    )
+    manifest = bundle / "attack_manifest.csv"
+    rows = list(csv.DictReader(manifest.open(newline="")))
+    fields = list(rows[0]) + [
+        "full_data_cross", "cross_data_mode", "evaluation_ids_source",
+    ]
+    rows[0].update({
+        "scope": "cross_dataset", "source_dataset": "visa",
+        "full_data_cross": "true", "cross_data_mode": "fullcross",
+        "evaluation_ids_source": "complete_retained_indices.csv",
+    })
+    with manifest.open("w", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fields)
+        writer.writeheader()
+        writer.writerows(rows)
+
+    with pytest.raises(FileNotFoundError, match="complete_retained_indices.csv"):
+        discover_attacks([bundle], scopes=("cross_dataset",), targets=("mvtec",))
 
 
 @pytest.mark.parametrize("split_protocol", ["balanced", "full"])

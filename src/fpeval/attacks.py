@@ -298,6 +298,7 @@ def discover_attacks(
         )
         _validate_protocol(evaluation_protocol)
         attack_train_protocol: list[dict[str, str]] | None = None
+        complete_protocol: list[dict[str, str]] | None = None
         for raw in _read_csv(bundle / "attack_manifest.csv"):
             scope_raw = _field(raw, "scope").lower()
             try:
@@ -352,12 +353,30 @@ def discover_attacks(
                 and full_data_cross is True
             )
             if full_cross_dataset:
-                if attack_train_protocol is None:
-                    attack_train_protocol = _read_csv(
-                        _protocol_path(bundle, "attack_train_indices.csv")
-                    )
-                    _validate_protocol(attack_train_protocol)
-                protocol_rows = [*attack_train_protocol, *evaluation_protocol]
+                complete_path = _protocol_path(
+                    bundle, "complete_retained_indices.csv"
+                )
+                if complete_path.is_file():
+                    if complete_protocol is None:
+                        complete_protocol = _read_csv(complete_path)
+                        _validate_protocol(complete_protocol)
+                    protocol_rows = complete_protocol
+                else:
+                    recorded_source = str(
+                        raw.get("evaluation_ids_source", "")
+                    ).strip()
+                    if Path(recorded_source).name == "complete_retained_indices.csv":
+                        raise FileNotFoundError(complete_path)
+                    # Compatibility with older two-source bundles. This can
+                    # reconstruct a complete target only when that dataset was
+                    # also a source; current generators always package the
+                    # dedicated complete-retained protocol instead.
+                    if attack_train_protocol is None:
+                        attack_train_protocol = _read_csv(
+                            _protocol_path(bundle, "attack_train_indices.csv")
+                        )
+                        _validate_protocol(attack_train_protocol)
+                    protocol_rows = [*attack_train_protocol, *evaluation_protocol]
                 cohort = [
                     row for row in protocol_rows
                     if row["dataset"] == target
