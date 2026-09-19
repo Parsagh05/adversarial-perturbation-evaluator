@@ -58,6 +58,12 @@ class EvaluationConfig:
     # fixed evaluation split, which is what an attacked run scores; without
     # it the cohort is the whole mounted test split.
     clean_only: bool = False
+    # Also score each perturbation on the images it was fitted on, as a
+    # second set of rows marked partition=attack_train. The gap against the
+    # held-out rows is the generalisation measure for a universal delta: one
+    # that works only where it was fitted memorised its cohort. per_image is
+    # skipped, having fitted the single image it attacks and held nothing out.
+    evaluate_attack_train: bool = False
     run_metadata: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:

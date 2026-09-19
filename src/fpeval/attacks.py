@@ -233,6 +233,13 @@ class Attack:
     perturbation_path: Path
     evaluation_ids: tuple[str, ...]
     attacked_ids: tuple[str, ...]
+    # The images this perturbation was fitted on. Scoring them alongside the
+    # held-out ones is what makes the generalisation gap visible: a delta that
+    # only works where it was fitted memorised its cohort. Empty for per_image,
+    # which fits the single image it attacks and so has nothing held out, and
+    # for older bundles that ship no attack_train_indices.csv.
+    train_ids: tuple[str, ...] = ()
+    train_attacked_ids: tuple[str, ...] = ()
 
     @property
     def condition_id(self) -> str:
@@ -269,7 +276,9 @@ class Attack:
         if self.record["scope"] != "per_image":
             if len(delta) != 1:
                 raise ValueError("Universal perturbation files must contain one tensor")
-            return delta.float().contiguous(), {sample_id: 0 for sample_id in self.attacked_ids}
+            # One tensor for every image, so the training half indexes it too.
+            covered = (*self.attacked_ids, *self.train_attacked_ids)
+            return delta.float().contiguous(), {sample_id: 0 for sample_id in covered}
         ids_key = str(self.record.get("sample_ids_key") or "sample_ids")
         stored = payload.get(ids_key) if isinstance(payload, dict) else None
         if stored is None:
@@ -309,6 +318,7 @@ def discover_attacks(
         )
         _validate_protocol(evaluation_protocol)
         attack_train_protocol: list[dict[str, str]] | None = None
+        train_protocol: list[dict[str, str]] | None = None
         complete_protocol: list[dict[str, str]] | None = None
         for raw in _read_csv(bundle / "attack_manifest.csv"):
             scope_raw = _field(raw, "scope").lower()
@@ -412,7 +422,36 @@ def discover_attacks(
                 raw, "noise_file", "perturbation_file", "perturbation_path",
                 "noise_path", "delta_file", "artifact_path",
             )
-            attack = Attack(bundle, normalized, _artifact_path(bundle, path_text), evaluation_ids, attacked_ids)
+            # The training half, for runs that also score what the delta was
+            # fitted on. per_image fits the single image it attacks, so it has
+            # no held-out set and no gap to measure; older bundles may ship no
+            # attack_train_indices.csv, and an absent one is not an error here
+            # because the held-out evaluation does not depend on it.
+            train_ids: tuple[str, ...] = ()
+            train_attacked_ids: tuple[str, ...] = ()
+            if scope != "per_image":
+                if train_protocol is None:
+                    train_path = _protocol_path(bundle, "attack_train_indices.csv")
+                    if train_path.is_file():
+                        train_protocol = _read_csv(train_path)
+                        _validate_protocol(train_protocol)
+                    else:
+                        train_protocol = []
+                train_cohort = [
+                    row for row in train_protocol
+                    if row["dataset"] == source
+                    and row["partition"] == "attack_train"
+                    and (scope in DATASET_LEVEL_SCOPES or row["category"] == category)
+                ]
+                train_ids = tuple(row["protocol_id"] for row in train_cohort)
+                train_attacked_ids = tuple(
+                    row["protocol_id"] for row in train_cohort
+                    if int(row["label"]) == source_label
+                )
+            attack = Attack(
+                bundle, normalized, _artifact_path(bundle, path_text),
+                evaluation_ids, attacked_ids, train_ids, train_attacked_ids,
+            )
             if not attack.perturbation_path.is_file():
                 raise FileNotFoundError(attack.perturbation_path)
             if attack.condition_id in seen:

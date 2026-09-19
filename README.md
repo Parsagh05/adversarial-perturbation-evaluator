@@ -129,6 +129,32 @@ Thresholds are calibrated only from the clean fixed evaluation cohort and then
 frozen. Because this uses labeled evaluation data, these are benchmark oracle
 operating points, not deployment calibration.
 
+## Scoring the images a perturbation was fitted on
+
+`evaluate_attack_train: true` scores each perturbation a second time, over the
+images it was optimised on, and writes those as their own rows marked
+`partition=attack_train`; the held-out rows keep `partition=evaluation`. The two
+are never pooled - they answer different questions, and the gap between them is
+the generalisation measure for a universal delta. One that scores well where it
+was fitted and poorly elsewhere memorised its cohort, which reporting only the
+held-out number hides.
+
+Thresholds stay calibrated on the held-out cohort and are then frozen, so both
+partitions are scored against the same operating points. Recalibrating on the
+fitted images would give them their own and make the two incomparable.
+
+It applies to three of the four scopes. `per_dataset`, `per_category` and
+`cross_dataset` fit one shared tensor and hold images back, so the delta can be
+applied to the training half after the fact - no regeneration is needed, since
+every bundle already ships `attack_train_indices.csv`. `per_image` fits the
+single image it attacks and holds nothing back, so there is no gap to measure and
+it produces held-out rows only. A bundle that ships no `attack_train_indices.csv`
+is not an error: the held-out evaluation does not depend on it, so such a bundle
+simply yields no fitted rows.
+
+Cost is one extra evaluation pass per bundle. Qualitative samples and saved
+predictions stay with the held-out pass, which is what the benchmark delivers.
+
 ## Clean-only runs
 
 `clean_only: true` scores the cohort and stops. No perturbation is loaded, no

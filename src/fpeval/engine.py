@@ -425,11 +425,19 @@ def _evaluate_condition(
     thresholds: dict[str, dict[str, float]],
     config: EvaluationConfig,
     clean_metrics: dict[tuple[str, ...], dict[str, dict[str, float]]] | None = None,
+    partition: str = "evaluation",
 ) -> tuple[
     list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]],
     dict[str, np.ndarray], torch.Tensor, dict[str, int],
 ]:
-    cohort = [samples_by_id[sample_id] for sample_id in attack.evaluation_ids]
+    # "attack_train" scores the same perturbation on the images it was fitted
+    # on. Only the cohort changes; every metric is computed identically, which
+    # is what makes the two sets of rows comparable.
+    if partition == "attack_train":
+        cohort_ids, attacked_ids = attack.train_ids, attack.train_attacked_ids
+    else:
+        cohort_ids, attacked_ids = attack.evaluation_ids, attack.attacked_ids
+    cohort = [samples_by_id[sample_id] for sample_id in cohort_ids]
     # Clean predictions and their postprocessing depend only on the cohort, so
     # identical cohorts across conditions reuse one set of clean-side metrics.
     cohort_key = tuple(sample.protocol_id for sample in cohort)
@@ -437,7 +445,7 @@ def _evaluate_condition(
         clean_metrics = {}
     clean_metric_cache = clean_metrics.setdefault(cohort_key, {})
     clean_cache = _postprocess_predictions(adapter, cohort, raw_clean_cache)
-    attacked_set = set(attack.attacked_ids)
+    attacked_set = set(attacked_ids)
     attacked_samples = [sample for sample in cohort if sample.protocol_id in attacked_set]
     delta, delta_index = attack.load(verify_checksum=config.verify_checksums)
     adversarial_only, linf = _predict_attacked(
@@ -461,6 +469,9 @@ def _evaluate_condition(
     per_image_rows: list[dict[str, Any]] = []
     base = _condition_fields(attack)
     base["condition_id"] = attack.condition_id
+    # Held-out and fitted rows are never pooled: they answer different
+    # questions and this column is what keeps them apart.
+    base["partition"] = partition
 
     for category in sorted({sample.category for sample in cohort}):
         category_samples = [sample for sample in cohort if sample.category == category]
@@ -718,6 +729,22 @@ def evaluate(config: EvaluationConfig) -> Path:
             if missing:
                 raise ValueError(f"Protocol IDs are absent from {target}: {missing[:5]}")
             fixed_samples = [indexed[sample_id] for sample_id in required_ids]
+            # Thresholds stay calibrated on the held-out cohort and are then
+            # frozen, so the fitted images are scored against the same operating
+            # points rather than their own.
+            calibration_samples = list(fixed_samples)
+            if config.evaluate_attack_train:
+                train_ids = list(dict.fromkeys(
+                    sample_id for attack in target_attacks
+                    for sample_id in attack.train_ids
+                ))
+                absent = [i for i in train_ids if i not in indexed]
+                if absent:
+                    raise ValueError(
+                        f"Attack-train IDs are absent from {target}: {absent[:5]}"
+                    )
+                known = {sample.protocol_id for sample in fixed_samples}
+                fixed_samples += [indexed[i] for i in train_ids if i not in known]
         else:
             # clean_only with no manifest: score everything mounted, which is
             # the split published numbers are computed over.
@@ -728,6 +755,7 @@ def evaluate(config: EvaluationConfig) -> Path:
                 fixed_samples = [s for s in fixed_samples if s.category in wanted]
             if not fixed_samples:
                 raise ValueError(f"No {target} samples to score")
+            calibration_samples = fixed_samples
         kwargs = dict(config.model_kwargs_by_target[target])
         kwargs.setdefault("device", config.device)
         kwargs.setdefault("image_size", config.image_size)
@@ -738,7 +766,7 @@ def evaluate(config: EvaluationConfig) -> Path:
             resolved_model_settings[target] = model_settings
             raw_clean = _predict_clean(adapter, fixed_samples, config)
             clean = _postprocess_predictions(adapter, fixed_samples, raw_clean)
-            thresholds = _calibrate_clean(target, fixed_samples, clean, config)
+            thresholds = _calibrate_clean(target, calibration_samples, clean, config)
             clean_metrics: dict[tuple[str, ...], dict[str, dict[str, float]]] = {}
             threshold_payload["targets"][target] = thresholds
             if config.clean_only:
@@ -757,6 +785,23 @@ def evaluate(config: EvaluationConfig) -> Path:
                 all_summary.extend(summary)
                 all_categories.extend(categories)
                 all_images.extend(images)
+                # A second pass over the images this delta was fitted on. Its
+                # rows are marked partition=attack_train and kept beside the
+                # held-out ones rather than pooled with them; the gap between
+                # the two is the generalisation measure. Qualitative samples and
+                # saved predictions stay with the held-out pass, which is what
+                # the benchmark delivers.
+                if config.evaluate_attack_train and attack.train_ids:
+                    train_summary, train_categories, train_images, *_ = (
+                        _evaluate_condition(
+                            attack, indexed, raw_clean, adapter, thresholds,
+                            config, clean_metrics=clean_metrics,
+                            partition="attack_train",
+                        )
+                    )
+                    all_summary.extend(train_summary)
+                    all_categories.extend(train_categories)
+                    all_images.extend(train_images)
                 if config.save_predictions:
                     prediction_dir = output / "predictions" / attack.record["prompt_mode"] / attack.record["setup_id"]
                     prediction_dir.mkdir(parents=True, exist_ok=True)
