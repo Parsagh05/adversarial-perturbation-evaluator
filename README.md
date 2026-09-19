@@ -37,7 +37,7 @@ balanced/full split protocol: `_halfcross` reuses that perturbation on the other
 dataset's evaluation partition, while `_fullcross` trains and evaluates on both
 retained partitions of the respective source and target datasets. Setup IDs
 follow
-`ep{E}[_cat{C}_img{I}]_eps{E}[_ce_focal_dice][_full][_fullcross|_halfcross][_train{P}][_learnable_prompt]`,
+`ep{E}[_cross{X}][_cat{C}_img{I}]_eps{E}[_ce_focal_dice|_hinge{H}][_mom{M}][_linear_step|_cosine_step][_best][_full][_fullcross|_halfcross][_train{P}][_learnable_prompt]`,
 mirroring the generator's `compose_setup_id`. The budget and epsilon grids are
 swept, so neither is a fixed set, and any number may be fractional with a
 decimal point written `p` (`ep7p14`, `eps0p02`, `train12p5`). The generator
@@ -54,7 +54,15 @@ when the per-category and per-image budgets differ from the per-dataset one, and
 `_full` only under the full split protocol, which keeps every test image instead
 of downsampling each category to equal labels; the balanced protocol adds no
 component. `_fullcross` and `_halfcross` independently record which source and
-target partitions cross-dataset transfer uses. The
+target partitions cross-dataset transfer uses; because `_full` is a prefix of
+`_fullcross` the parser guards the protocol with a lookahead, without which it
+swallows the front of the data mode and drops every later component. `_cross{X}`
+appears only when cross-dataset takes an epoch budget of its own. The remaining
+components each name a setting that changes the perturbation and is absent at
+its default: `_hinge{H}` the margin displacement hinge, which only a margin_topk
+setup can carry since ce_focal_dice is already bounded; `_mom{M}` the momentum
+decay; `_linear_step` or `_cosine_step` the step-size schedule, where `constant`
+adds nothing; and `_best` the returned iterate, where `final` adds nothing. The
 `_train{P}` component appears only when the attack-train fraction is below 1.0,
 and it is preserved: a 20% run and a full run are different setups. Every
 optional component must be parsed, because an unmatched one truncates the ID

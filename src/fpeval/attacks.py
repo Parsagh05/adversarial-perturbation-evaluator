@@ -48,10 +48,21 @@ DIRECTION_LABELS = {"normal_to_abnormal": (0, 1), "abnormal_to_normal": (1, 0)}
 # would carry the same setup_id as the balanced run it must stay separate from.
 _NUMBER = r"\d+(?:p\d+)?"
 SETUP_PATTERN = re.compile(
+    # Budget: per-dataset, then the cross, per-category and per-image budgets
+    # wherever they differ from it. steps{N} is the pre-budget spelling.
     rf"(?:ep{_NUMBER}|steps\d+)"
+    rf"(?:_cross{_NUMBER})?"
     rf"(?:_cat{_NUMBER}_img{_NUMBER})?"
     rf"_eps{_NUMBER}"
-    rf"(?:_ce_focal_dice|_margin_topk)?"
+    # Objective: ce_focal_dice names itself; margin_topk is the default and
+    # names only its displacement hinge. _margin_topk is the pre-flip spelling.
+    rf"(?:_ce_focal_dice|_margin_topk|_hinge{_NUMBER})?"
+    rf"(?:_mom{_NUMBER})?"
+    rf"(?:_(?:linear|cosine)_step)?"
+    rf"(?:_best)?"
+    # "_full" is the split protocol and "_fullcross" the cross data mode; the
+    # lookahead stops the protocol eating the front of the data mode, which
+    # would truncate everything after it off the name.
     rf"(?:_full(?!cross))?(?:_fullcross|_halfcross)?"
     rf"(?:_train{_NUMBER})?(?:_learnable_prompt)?",
     re.I,

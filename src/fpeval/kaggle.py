@@ -11,9 +11,13 @@ import re
 _NUMBER = r"\d+(?:p\d+)?"
 SETUP_PATTERN = re.compile(
     rf"(?:ep{_NUMBER}|steps\d+)"
+    rf"(?:_cross{_NUMBER})?"
     rf"(?:_cat{_NUMBER}_img{_NUMBER})?"
     rf"_eps{_NUMBER}"
-    rf"(?:_ce_focal_dice|_margin_topk)?"
+    rf"(?:_ce_focal_dice|_margin_topk|_hinge{_NUMBER})?"
+    rf"(?:_mom{_NUMBER})?"
+    rf"(?:_(?:linear|cosine)_step)?"
+    rf"(?:_best)?"
     rf"(?:_full(?!cross))?(?:_fullcross|_halfcross)?"
     rf"(?:_train{_NUMBER})?(?:_learnable_prompt)?",
     re.IGNORECASE,

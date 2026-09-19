@@ -364,6 +364,22 @@ def test_setup_id_normalization_covers_the_generator_grammar(tmp_path):
         ("ep7p14_cat100_img100_eps2_ce_focal_dice_full_train20_learnable_prompt",
          "learnable_prompt",
          "ep7p14_cat100_img100_eps2_ce_focal_dice_full_train20"),
+        # Cross-dataset carries its own epoch budget when it differs.
+        ("ep100_cross7p14_eps4", "frozen_prompt", "ep100_cross7p14_eps4"),
+        ("ep7p14_cross50_cat100_img100_eps4", "frozen_prompt",
+         "ep7p14_cross50_cat100_img100_eps4"),
+        # The margin hinge, momentum, step schedule and iterate selection.
+        ("ep100_eps4_hinge0p5", "frozen_prompt", "ep100_eps4_hinge0p5"),
+        ("ep100_eps4_mom0p9", "frozen_prompt", "ep100_eps4_mom0p9"),
+        ("ep100_eps4_cosine_step", "frozen_prompt", "ep100_eps4_cosine_step"),
+        ("ep100_eps4_linear_step_best", "frozen_prompt",
+         "ep100_eps4_linear_step_best"),
+        # Everything at once, in the generator's component order.
+        ("ep100_cross7p14_cat50_img20_eps0p02_hinge0p5_mom0p9_cosine_step_best"
+         "_full_fullcross_train12p5_learnable_prompt",
+         "learnable_prompt",
+         "ep100_cross7p14_cat50_img20_eps0p02_hinge0p5_mom0p9_cosine_step_best"
+         "_full_fullcross_train12p5"),
     ]
     seen = set()
     for directory, expected_mode, expected_id in cases:
@@ -446,6 +462,23 @@ def test_loss_formulation_is_inferred_from_the_id_when_absent(tmp_path, setup, e
     attacks = discover_attacks(bundles, scopes=("per_dataset",), targets=("mvtec",))
     assert len(attacks) == 1
     assert attacks[0].record["loss_formulation"] == expected
+
+
+def test_the_split_protocol_does_not_eat_the_cross_data_mode(tmp_path):
+    """"_full" is a prefix of "_fullcross", and an unguarded match truncates.
+
+    Without the lookahead the protocol component consumes the front of
+    "_fullcross", the data mode then cannot match, and every component after it
+    is silently dropped from the ID.
+    """
+    def norm(directory):
+        return _metadata(tmp_path / "setups" / "frozen_prompt" / directory / "b")[1]
+
+    assert norm("ep100_eps4_fullcross_train20") == "ep100_eps4_fullcross_train20"
+    assert norm("ep100_eps4_full_fullcross") == "ep100_eps4_full_fullcross"
+    # The three are distinct setups and none may collapse onto another.
+    assert len({norm("ep100_eps4_full"), norm("ep100_eps4_fullcross"),
+                norm("ep100_eps4_full_fullcross")}) == 3
 
 
 def test_the_two_setup_patterns_do_not_drift(tmp_path):
