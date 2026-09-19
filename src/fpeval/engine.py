@@ -602,7 +602,6 @@ def _evaluate_condition(
                 **{f"adversarial_{name}": value for name, value in adversarial_class.items()},
                 **target_image_metrics,
                 "target_region_pixel_flip_rate_macro": _mean(pixel_records, "pixel_flip_rate"),
-                "target_region_pixel_flip_rate_micro": 100 * region_flips / region_eligible if region_eligible else np.nan,
                 "target_region_pixel_attack_success_rate_macro": 100 * region_successes / region_success_eligible if region_success_eligible else np.nan,
                 "target_region_pixel_eligible_count": region_eligible,
                 "target_region_pixel_flip_count": region_flips,
@@ -610,7 +609,6 @@ def _evaluate_condition(
                 "target_region_pixel_success_count": region_successes,
                 "location_free_topk_fraction": config.location_free_topk_fraction,
                 "location_free_topk_pixel_flip_rate_macro": _mean(topk_valid, "pixel_flip_rate"),
-                "location_free_topk_pixel_flip_rate_micro": 100 * topk_flips / topk_eligible if topk_eligible else np.nan,
                 "location_free_topk_pixel_attack_success_rate_macro": 100 * topk_successes / topk_success_eligible if topk_success_eligible else np.nan,
                 "location_free_topk_pixel_eligible_count": topk_eligible,
                 "location_free_topk_pixel_flip_count": topk_flips,
@@ -639,27 +637,17 @@ def _evaluate_condition(
             "delta_p_auroc", "delta_p_f1_max", "delta_aupro", "clean_accuracy",
             "clean_fpr", "clean_fnr", "adversarial_accuracy", "adversarial_fpr",
             "adversarial_fnr", "attack_flip_rate", "targeted_attack_success_rate",
-            "target_region_pixel_flip_rate_macro", "target_region_pixel_flip_rate_micro",
+            "target_region_pixel_flip_rate_macro",
             "target_region_pixel_attack_success_rate_macro",
-            "location_free_topk_pixel_flip_rate_macro", "location_free_topk_pixel_flip_rate_micro",
-            "location_free_topk_pixel_attack_success_rate_macro", "realized_linf_mean", "realized_linf_max",
+            "location_free_topk_pixel_flip_rate_macro",
+            "location_free_topk_pixel_attack_success_rate_macro",
+            "realized_linf_mean", "realized_linf_max",
         ]
+        # Macro throughout: every image is one unit of evidence, as the
+        # image-level metrics already treat it. Pooling pixels instead let one
+        # image with a large defect region speak for the whole cohort.
         summary.update({name: _mean(rows, name) for name in metric_names})
-        region_eligible = sum(int(row["target_region_pixel_eligible_count"]) for row in rows)
-        region_flips = sum(int(row["target_region_pixel_flip_count"]) for row in rows)
-        region_success_eligible = sum(int(row["target_region_pixel_success_eligible_count"]) for row in rows)
-        region_successes = sum(int(row["target_region_pixel_success_count"]) for row in rows)
-        topk_eligible = sum(int(row["location_free_topk_pixel_eligible_count"]) for row in rows)
-        topk_flips = sum(int(row["location_free_topk_pixel_flip_count"]) for row in rows)
-        topk_success_eligible = sum(int(row["location_free_topk_pixel_success_eligible_count"]) for row in rows)
-        topk_successes = sum(int(row["location_free_topk_pixel_success_count"]) for row in rows)
-        summary.update({
-            "target_region_pixel_flip_rate_micro": 100 * region_flips / region_eligible if region_eligible else np.nan,
-            "target_region_pixel_attack_success_rate_micro": 100 * region_successes / region_success_eligible if region_success_eligible else np.nan,
-            "location_free_topk_pixel_flip_rate_micro": 100 * topk_flips / topk_eligible if topk_eligible else np.nan,
-            "location_free_topk_pixel_attack_success_rate_micro": 100 * topk_successes / topk_success_eligible if topk_success_eligible else np.nan,
-            "location_free_topk_fraction": config.location_free_topk_fraction,
-        })
+        summary["location_free_topk_fraction"] = config.location_free_topk_fraction
         summary_rows.append(summary)
 
     predictions = {

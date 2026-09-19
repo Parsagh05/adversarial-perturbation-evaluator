@@ -84,6 +84,26 @@ def test_end_to_end_fixed_cohort(tmp_path):
     assert row["prompt_ensemble_sha256"] == "b6b0fa61c07f2994"
     assert row["prompt_checkpoint_sha256"] == ""
     assert "prompt_provenance" not in row
+    # Pixel success is reported macro only: every image is one unit of
+    # evidence, as the image-level metrics already treat it. Pooling pixels
+    # instead let one image with a large defect region speak for the cohort.
+    for name in ("summary.csv", "category_metrics.csv"):
+        with (output / name).open(newline="") as handle:
+            header = next(csv.reader(handle))
+        assert not [c for c in header if c.endswith("_micro")], name
+        for macro in ("target_region_pixel_flip_rate_macro",
+                      "target_region_pixel_attack_success_rate_macro"):
+            assert macro in header, (name, macro)
+    # The counts stay: the macro ASR is computed from the per-image success
+    # flags, and the pixel counts separate "nothing flipped" from "nothing
+    # was eligible".
+    with (output / "category_metrics.csv").open(newline="") as handle:
+        header = next(csv.reader(handle))
+    for count in ("target_region_pixel_eligible_count",
+                  "target_region_pixel_flip_count",
+                  "target_region_pixel_success_eligible_count",
+                  "target_region_pixel_success_count"):
+        assert count in header, count
     assert float(row["clean_i_auroc"]) == 100.0
     with (output / "per_image.csv").open(newline="") as handle:
         images = list(csv.DictReader(handle))

@@ -117,7 +117,13 @@ Target-region success uses the recorded fixed region for normal-to-abnormal and
 the ground-truth defect mask for abnormal-to-normal. Normal-to-abnormal also
 gets the newer location-free Top-K metric. Only pixels cleanly predicted as the
 source class are eligible, and an image succeeds when at least 50% of eligible
-pixels flip. Both category-macro and count-weighted micro rates are exported.
+pixels flip. Only macro rates are exported: every image counts once, as the
+image-level metrics already treat it and as the per-category `__macro__`
+aggregation does elsewhere. Pooling pixels instead let one image with a large
+defect region speak for the whole cohort. The per-image eligible, flip and
+success counts are still written to `category_metrics.csv`: the macro ASR is
+computed from the success flags, and the pixel counts are what separates a
+cohort where nothing flipped from one where nothing was eligible.
 
 Thresholds are calibrated only from the clean fixed evaluation cohort and then
 frozen. Because this uses labeled evaluation data, these are benchmark oracle
