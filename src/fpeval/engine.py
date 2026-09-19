@@ -221,6 +221,10 @@ def _condition_fields(attack: Attack) -> dict[str, Any]:
     names = (
         "prompt_mode", "setup_id", "source_dataset", "target_dataset", "scope",
         "category", "direction", "source_label", "target_label", "loss_formulation",
+        # How the generator filed this bundle: everything shaping the attack
+        # except the budget, and the one budget this scope spends. They are the
+        # directory levels, carried as columns so a row names its own place.
+        "settings", "scope_budget",
         "loss_mode", "epsilon", "image_size",
         # The generator budgets each scope in epochs and derives the step count
         # from the training-set size, so two conditions in one setup can carry

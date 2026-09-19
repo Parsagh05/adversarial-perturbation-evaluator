@@ -58,14 +58,30 @@ def slice_root(root: Path, record: dict[str, Any]) -> Path:
         f"{safe_component(record['source_dataset'])}_to_"
         f"{safe_component(record['target_dataset'])}"
     )
+    # Mirrors the generator's tree, settings / scope / budget / prompt family,
+    # so a budget sweep is one directory listing on both sides. The dataset
+    # pair hangs below it, being an evaluation concept the generator has no
+    # level for. A bundle from the older flat tree is filed here too, its
+    # levels derived from the setup ID, so one results tree has one shape. The
+    # flat fallback below is for an ID no parser could read, where inventing
+    # levels would file a run under a name that means nothing.
+    settings = str(record.get("settings") or "")
+    budget = str(record.get("scope_budget") or "")
+    if not settings or not budget:
+        return (
+            root / "setups"
+            / safe_component(record["prompt_mode"])
+            / safe_component(record["setup_id"])
+            / "datasets" / dataset_pair
+            / safe_component(record["scope"])
+        )
     return (
-        root
-        / "setups"
-        / safe_component(record["prompt_mode"])
-        / safe_component(record["setup_id"])
-        / "datasets"
-        / dataset_pair
+        root / "setups"
+        / safe_component(settings)
         / safe_component(record["scope"])
+        / safe_component(budget)
+        / safe_component(record["prompt_mode"])
+        / "datasets" / dataset_pair
     )
 
 

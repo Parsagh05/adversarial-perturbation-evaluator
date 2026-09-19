@@ -131,6 +131,76 @@ def _formulation_from_setup_id(setup_id: str) -> str:
     return "ce_focal_dice" if lowered.startswith("steps") else "margin_topk"
 
 
+# The generator groups its tree as
+# setups/<settings>/<scope>/ep<budget>/<frozen|learnable>/, where <settings> is
+# the setup ID minus its leading epochs component and the prompt-family suffix,
+# and each scope directory carries only the budget that scope spends.
+_BUDGET_TAG = re.compile(
+    rf"^(?:ep{_NUMBER}|steps\d+)(?:_cross{_NUMBER})?"
+    rf"(?:_cat{_NUMBER}_img{_NUMBER})?",
+    re.I,
+)
+# Which number of the budget each scope actually spends.
+_SCOPE_BUDGET = {
+    "per_dataset": "ep", "cross_dataset": "cross",
+    "per_category": "cat", "per_image": "img",
+}
+
+
+def split_setup_id(setup_id: str) -> tuple[str, str]:
+    """``(budget tag, settings)``, mirroring the generator's own split.
+
+    An ID the pattern cannot read yields an empty budget and itself as the
+    settings, which keeps an unrecognised name in one piece rather than
+    silently reshaping the tree around a half-parse.
+    """
+    match = _BUDGET_TAG.match(setup_id)
+    if not match or not match.group():
+        return "", setup_id
+    return match.group(), setup_id[len(match.group()):].lstrip("_")
+
+
+def scope_budget_tag(setup_id: str, scope: str) -> str:
+    """The ``ep{N}`` a scope spends, read off the ID's budget component.
+
+    The budget names a scope only where it differs from the per-dataset one, so
+    an absent component means that scope shares it.
+    """
+    budget, _ = split_setup_id(setup_id)
+    if not budget:
+        return ""
+    parts = budget.split("_")
+    wanted = _SCOPE_BUDGET.get(scope, "ep")
+    for part in parts[1:]:
+        if part.lower().startswith(wanted):
+            return "ep" + part[len(wanted):]
+    return parts[0] if parts[0].lower().startswith("ep") else ""
+
+
+PROMPT_FAMILY_DIRECTORIES = frozenset({"frozen_prompt", "learnable_prompt"})
+_SCOPE_DIRECTORIES = frozenset(_SCOPE_BUDGET)
+_BUDGET_DIRECTORY = re.compile(rf"^ep{_NUMBER}$", re.I)
+
+
+def layout_from_bundle(bundle: Path) -> tuple[str, str] | None:
+    """``(settings, scope budget)`` when the bundle sits in the grouped tree.
+
+    Read from the path rather than derived from the setup ID because the two
+    can disagree: under halfcross the cross scope reuses the per-dataset delta,
+    so its budget is dropped from the ID while the directory still records it.
+    The path is how the generator actually filed the bundle.
+    """
+    parts = bundle.parts
+    if len(parts) < 4:
+        return None
+    settings, scope, budget, family = parts[-4:]
+    if family not in PROMPT_FAMILY_DIRECTORIES or scope not in _SCOPE_DIRECTORIES:
+        return None
+    if not _BUDGET_DIRECTORY.match(budget):
+        return None
+    return settings, budget
+
+
 def _metadata(bundle: Path) -> tuple[str, str]:
     combined = "/".join(part.lower() for part in bundle.parts)
     prompt_mode = "learnable_prompt" if "learnable_prompt" in combined else "frozen_prompt"
@@ -350,8 +420,22 @@ def discover_attacks(
                 if scope == "cross_dataset" else None
             )
             loss_mode = _field(raw, "loss_mode", "objective")
+            # The grouped tree splits the flat ID across levels, so the path
+            # can no longer supply it; the manifest records it directly.
+            recorded_setup_id = _field(raw, "setup_id", required=False)
+            if recorded_setup_id.endswith("_learnable_prompt"):
+                recorded_setup_id = recorded_setup_id[: -len("_learnable_prompt")]
+            effective_setup_id = recorded_setup_id or setup_id
+            placed = layout_from_bundle(bundle)
+            if placed is not None:
+                settings, scope_budget = placed
+            else:
+                settings = split_setup_id(effective_setup_id)[1]
+                scope_budget = scope_budget_tag(effective_setup_id, scope)
             normalized = {
-                **raw, "prompt_mode": prompt_mode, "setup_id": setup_id,
+                **raw, "prompt_mode": prompt_mode,
+                "setup_id": recorded_setup_id or setup_id,
+                "settings": settings, "scope_budget": scope_budget,
                 "scope": scope, "source_dataset": source, "target_dataset": target,
                 "direction": direction, "source_label": source_label,
                 "target_label": target_label, "category": category,

@@ -23,12 +23,25 @@ and safely extracted into the writable evaluation cache. Both layouts below are
 supported:
 
 ```text
+setups/<settings>/<scope>/ep<budget>/{frozen_prompt,learnable_prompt}/
+
+# and the older flat tree, still read:
 setups/{frozen_prompt,learnable_prompt}/<setup_id>/
   canonical_clip_per_dataset/
   canonical_clip_cross_dataset/
   canonical_clip_per_category/
   canonical_clip_per_image/
 ```
+
+`<settings>` is the setup ID minus its leading budget component and the prompt
+suffix, so budgets worth comparing sit in one directory listing, and each scope
+directory carries only the budget that scope spends. Two consequences follow.
+The flat setup ID is no longer a path component, so it is read from the
+manifest's own `setup_id`, with the path as the fallback for older bundles. And
+`<settings>` and the budget are read from the path rather than derived from the
+ID, because the two can disagree: under `halfcross` the cross scope reuses the
+per-dataset delta, so its budget is dropped from the ID while the directory
+still records it. Both are kept as result columns.
 
 `per_dataset` and `cross_dataset` are dataset-level scopes. `per_dataset` always
 trains on the source attack-train partition and evaluates on that dataset's
@@ -891,13 +904,9 @@ is few-shot - so it follows the adapter and needs no configuration.
   extracted_attacks/           # ZIP cache; ignored by numerical outputs
 
 <output_root>/<regime>/<model>_separated/
-  setups/
-    <frozen_prompt|learnable_prompt>/
-      <setup_id>/
-        datasets/
-          <source>_to_<target>/
-            <scope>/
-              numerical/       # CSV/JSON results for only this slice
+  setups/<settings>/<scope>/ep<budget>/<frozen_prompt|learnable_prompt>/
+    datasets/<source>_to_<target>/
+      numerical/           # CSV/JSON results for only this slice
 
 <output_root>/<regime>/<model>_samples_separated/
   setups/<prompt_mode>/<setup_id>/datasets/<source>_to_<target>/<scope>/
@@ -907,6 +916,8 @@ is few-shot - so it follows the adapter and needs no configuration.
 <output_root>/<regime>/<model>_separated.zip
 <output_root>/<regime>/<model>_samples_separated.zip
 ```
+
+The separated tree mirrors the generator's, so the same directory listing answers the same question on both sides; the dataset pair hangs below it, being an evaluation concept the generator has no level for. A bundle from the older flat tree is filed here too, its levels derived from the setup ID, so one results tree has one shape.
 
 `summary.csv` has one row per condition and pixel-threshold mode.
 `category_metrics.csv` contains directly computed category rows, and
