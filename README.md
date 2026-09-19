@@ -37,7 +37,11 @@ setups/{frozen_prompt,learnable_prompt}/<setup_id>/
 suffix, so budgets worth comparing sit in one directory listing, and each scope
 directory carries only the budget that scope spends. Two consequences follow.
 The flat setup ID is no longer a path component, so it is read from the
-manifest's own `setup_id`, with the path as the fallback for older bundles. And
+manifest's own `setup_id`, with the path as the fallback for older bundles. A
+bundle filed under the grouped tree whose manifest omits `setup_id` is refused at
+discovery rather than labelled `unspecified_setup`: that layout provably cannot
+supply the ID, and a silent placeholder pools every setup under one name and only
+surfaces later, as an empty selection after a whole run has been paid for. And
 `<settings>` and the budget are read from the path rather than derived from the
 ID, because the two can disagree: under `halfcross` the cross scope reuses the
 per-dataset delta, so its budget is dropped from the ID while the directory

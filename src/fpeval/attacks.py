@@ -425,8 +425,19 @@ def discover_attacks(
             recorded_setup_id = _field(raw, "setup_id", required=False)
             if recorded_setup_id.endswith("_learnable_prompt"):
                 recorded_setup_id = recorded_setup_id[: -len("_learnable_prompt")]
-            effective_setup_id = recorded_setup_id or setup_id
             placed = layout_from_bundle(bundle)
+            if placed is not None and not recorded_setup_id:
+                # The grouped tree splits the ID across levels and drops the
+                # budgets a scope does not spend, so the path provably cannot
+                # rebuild it. Labelling the condition "unspecified_setup" would
+                # pool every setup under one name and only surface later, as an
+                # empty selection after the whole run.
+                raise ValueError(
+                    f"{bundle} is filed under <settings>/<scope>/<budget>/"
+                    "<prompt family> but its attack_manifest.csv has no "
+                    "setup_id column, and that layout cannot supply one"
+                )
+            effective_setup_id = recorded_setup_id or setup_id
             if placed is not None:
                 settings, scope_budget = placed
             else:

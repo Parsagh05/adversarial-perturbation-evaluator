@@ -118,6 +118,30 @@ def test_the_setup_id_comes_from_the_manifest(tmp_path):
     assert record["scope_budget"] == "ep7p14"
 
 
+def test_a_grouped_bundle_without_the_id_fails_at_discovery(tmp_path):
+    """The seam that cost a full generation run before it was caught.
+
+    The generator regrouped the tree but its runners did not yet write
+    setup_id, so the ID reached nothing: the evaluator labelled every
+    condition "unspecified_setup" and the run only died later, on an empty
+    selection. Under this layout the path cannot supply the ID, so a manifest
+    that omits it is refused where the cost is one traceback.
+    """
+    import pytest
+
+    _build(tmp_path)
+    manifest = (tmp_path / "attacks" / "setups" / SETTINGS / "per_dataset"
+                / "ep7p14" / "frozen_prompt" / "attack_manifest.csv")
+    rows = list(csv.DictReader(manifest.open(newline="")))
+    for row in rows:
+        row.pop("setup_id")
+    _write(manifest, list(rows[0]), rows)
+
+    bundles = materialize_input(tmp_path / "attacks", tmp_path / "cache")
+    with pytest.raises(ValueError, match="has no setup_id"):
+        discover_attacks(bundles, scopes=("per_dataset",), targets=("mvtec",))
+
+
 def test_the_output_tree_mirrors_the_generators(tmp_path):
     mvtec = _build(tmp_path)
     evaluate(EvaluationConfig(
