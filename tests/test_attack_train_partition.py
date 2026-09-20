@@ -274,34 +274,37 @@ def test_a_cross_dataset_delta_has_no_fitted_cohort_in_its_target(tmp_path):
     assert {row["partition"] for row in rows} == {"evaluation"}
 
 
-def test_an_alltargets_bundle_is_refused_with_its_cause(tmp_path):
-    """PER_IMAGE_ATTACK_COHORT=all attacks more than this scores.
+def test_an_alltargets_bundle_is_scored_over_every_retained_image(tmp_path):
+    """PER_IMAGE_ATTACK_COHORT=all covers the complete retained cohort.
 
-    Such a bundle attacked every retained image, the attack-train half
-    included, while the evaluator scores the evaluation cohort as it does for
-    every other scope. The counts cannot agree, and the bare numbers do not
-    say why, so the refusal names the setting.
+    Such a bundle attacks every retained image, the attack-train half
+    included, so it is read from complete_retained_indices.csv exactly as a
+    fullcross bundle is. Each delta still fits only the image it attacks, so
+    the wider cohort leaks nothing. Before this, the evaluator scored the
+    evaluation half and refused the bundle on the count it could not match.
     """
-    _build(tmp_path)
-    bundle = (tmp_path / "attacks" / "setups" / "frozen_prompt" / "ep100_eps2"
+    mvtec = _build(tmp_path)
+    bundle = (tmp_path / "attacks" / "setups" / "frozen_prompt" / "ep100_eps4_alltargets"
               / "canonical_clip_per_image")
+    fitted = ["test/bottle/good/000", "test/bottle/good/002"]
     perturbation = bundle / "perturbations" / "per_image.pt"
     perturbation.parent.mkdir(parents=True)
-    fitted = ["test/bottle/good/000", "test/bottle/good/002"]
     torch.save({"deltas": torch.full((2, 3, 8, 8), 0.1),
                 "sample_ids": fitted}, perturbation)
     digest = hashlib.sha256(perturbation.read_bytes()).hexdigest()
-    _write(bundle / "evaluation_test_indices.csv", PROTOCOL,
-           [_row("good/000", 0, "evaluation"), _row("crack/001", 1, "evaluation")])
-    _write(bundle / "attack_train_indices.csv", PROTOCOL,
-           [_row("good/002", 0, "attack_train"),
-            _row("crack/003", 1, "attack_train")])
+
+    evaluation = [_row("good/000", 0, "evaluation"), _row("crack/001", 1, "evaluation")]
+    training = [_row("good/002", 0, "attack_train"), _row("crack/003", 1, "attack_train")]
+    _write(bundle / "evaluation_test_indices.csv", PROTOCOL, evaluation)
+    _write(bundle / "attack_train_indices.csv", PROTOCOL, training)
+    # What the generator ships for a complete-cohort bundle.
+    _write(bundle / "complete_retained_indices.csv", PROTOCOL, training + evaluation)
     _write(bundle / "attack_manifest.csv",
            [*MANIFEST, "category", "per_image_attack_cohort"],
            [{"scope": "per_image", "source_dataset": "mvtec",
              "target_dataset": "mvtec", "direction": "normal_to_abnormal",
              "source_label": 0, "target_label": 1, "loss_mode": "global",
-             "evaluation_attacked_image_count": 2,   # what "all" attacked
+             "evaluation_attacked_image_count": 2,   # both normal images
              "perturbation_file": "perturbations/per_image.pt",
              "artifact_sha256": digest, "image_size": 8, "epsilon": 0.2,
              "category": "bottle", "per_image_attack_cohort": "all"}])
@@ -309,5 +312,43 @@ def test_an_alltargets_bundle_is_refused_with_its_cause(tmp_path):
     from fpeval.attacks import discover_attacks, materialize_input
 
     bundles = materialize_input(tmp_path / "attacks", tmp_path / "cache")
-    with pytest.raises(ValueError, match="per_image_attack_cohort=all"):
-        discover_attacks(bundles, scopes=("per_image",), targets=("mvtec",))
+    attacks = discover_attacks(bundles, scopes=("per_image",), targets=("mvtec",))
+    assert len(attacks) == 1
+    attack = attacks[0]
+    assert sorted(attack.attacked_ids) == sorted(fitted)
+    assert len(attack.evaluation_ids) == 4      # the complete retained cohort
+    # Each delta fits its own image, so there is still no held-out half here.
+    assert attack.train_ids == ()
+
+    _, rows = _run(tmp_path, mvtec, evaluate_attack_train=True,
+                   scopes=("per_image",))
+    assert {row["partition"] for row in rows} == {"evaluation"}
+    assert {row["per_image_attack_cohort"] for row in rows} == {"all"}
+    assert {row["sample_count"] for row in rows} == {"4"}
+
+
+def test_a_default_cohort_bundle_still_scores_the_evaluation_half(tmp_path):
+    """The comparable default is unchanged by the above."""
+    mvtec = _build(tmp_path)
+    bundle = (tmp_path / "attacks" / "setups" / "frozen_prompt" / "ep100_eps2"
+              / "canonical_clip_per_image")
+    perturbation = bundle / "perturbations" / "per_image.pt"
+    perturbation.parent.mkdir(parents=True)
+    torch.save({"deltas": torch.full((1, 3, 8, 8), 0.1),
+                "sample_ids": ["test/bottle/good/000"]}, perturbation)
+    digest = hashlib.sha256(perturbation.read_bytes()).hexdigest()
+    _write(bundle / "evaluation_test_indices.csv", PROTOCOL,
+           [_row("good/000", 0, "evaluation"), _row("crack/001", 1, "evaluation")])
+    _write(bundle / "attack_manifest.csv",
+           [*MANIFEST, "category", "per_image_attack_cohort"],
+           [{"scope": "per_image", "source_dataset": "mvtec",
+             "target_dataset": "mvtec", "direction": "normal_to_abnormal",
+             "source_label": 0, "target_label": 1, "loss_mode": "global",
+             "evaluation_attacked_image_count": 1,
+             "perturbation_file": "perturbations/per_image.pt",
+             "artifact_sha256": digest, "image_size": 8, "epsilon": 0.2,
+             "category": "bottle", "per_image_attack_cohort": "evaluation"}])
+
+    _, rows = _run(tmp_path, mvtec, scopes=("per_image",))
+    assert {row["sample_count"] for row in rows} == {"2"}
+    assert {row["per_image_attack_cohort"] for row in rows} == {"evaluation"}

@@ -186,11 +186,16 @@ attacks the cohort every other scope is scored on, which is what keeps the four
 scopes comparable.
 
 `PER_IMAGE_ATTACK_COHORT=all` attacks every retained image, the attack-train
-half included. A delta that fits the image it attacks leaks nothing by doing so,
-but that is not the cohort this evaluates and the counts cannot agree, so such a
-bundle is refused by name rather than as a bare count mismatch. `all` also names
+half included. Such a bundle is read from `complete_retained_indices.csv`, the
+same complete cohort a `fullcross` bundle uses, so all of it is scored. A delta
+that fits the image it attacks leaks nothing by covering more images; `all` is a
+different cohort, not a weaker one.
+
+Because it is a different cohort, a row from one is not interchangeable with a
+row scored on the evaluation half. Two things keep that visible: `all` names
 itself in the setup ID as `_alltargets`, so it can never share a setup ID with
-its comparable twin and be pooled into one condition.
+its comparable twin and be pooled into one condition, and every row carries
+`per_image_attack_cohort` saying which it was.
 
 Cost is one extra evaluation pass per bundle. Qualitative samples and saved
 predictions stay with the held-out pass, which is what the benchmark delivers.

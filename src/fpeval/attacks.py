@@ -471,7 +471,19 @@ def discover_attacks(
                 and source != target
                 and full_data_cross is True
             )
-            if full_cross_dataset:
+            # PER_IMAGE_ATTACK_COHORT=all attacks every retained image rather
+            # than the evaluation partition, so the bundle covers the same
+            # complete cohort fullcross does and is read the same way. Each
+            # delta still fits only the image it attacks, so widening the
+            # cohort leaks nothing; it is a different cohort, not a weaker
+            # one, and the setup ID and per_image_attack_cohort column both
+            # say so, which is what keeps it from being compared blindly
+            # against a scope scored on the evaluation half.
+            attacks_every_image = (
+                scope == "per_image"
+                and _field(raw, "per_image_attack_cohort", required=False) == "all"
+            )
+            if full_cross_dataset or attacks_every_image:
                 complete_path = _protocol_path(
                     bundle, "complete_retained_indices.csv"
                 )
@@ -515,20 +527,6 @@ def discover_attacks(
             attacked_ids = tuple(row["protocol_id"] for row in cohort if int(row["label"]) == source_label)
             expected_count = int(_field(raw, "evaluation_attacked_image_count"))
             if len(attacked_ids) != expected_count:
-                # One mismatch has a known cause worth naming. A per-image
-                # bundle built with PER_IMAGE_ATTACK_COHORT=all attacked every
-                # retained image, including the attack-train half, while this
-                # evaluates the evaluation cohort as every other scope does.
-                # The counts cannot agree, and the bare numbers do not say so.
-                if _field(raw, "per_image_attack_cohort", required=False) == "all":
-                    raise ValueError(
-                        f"{bundle} was built with per_image_attack_cohort=all, "
-                        f"so it attacked {expected_count} images including the "
-                        f"attack-train half, but only {len(attacked_ids)} are in "
-                        "the evaluation cohort this scores. Rebuild it with the "
-                        "default cohort to keep per-image comparable with the "
-                        "other scopes."
-                    )
                 raise ValueError(f"Attacked cohort count is {len(attacked_ids)}, manifest says {expected_count}")
             path_text = _field(
                 raw, "noise_file", "perturbation_file", "perturbation_path",
