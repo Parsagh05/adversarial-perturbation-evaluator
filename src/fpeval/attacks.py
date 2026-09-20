@@ -64,7 +64,10 @@ SETUP_PATTERN = re.compile(
     # lookahead stops the protocol eating the front of the data mode, which
     # would truncate everything after it off the name.
     rf"(?:_full(?!cross))?(?:_fullcross|_halfcross)?"
-    rf"(?:_train{_NUMBER})?(?:_learnable_prompt)?",
+    # The per-image attack cohort. "evaluation" is the comparable default and
+    # adds nothing; "all" names itself here so the two cannot share a setup ID
+    # and be pooled as one condition.
+    rf"(?:_train{_NUMBER})?(?:_alltargets)?(?:_learnable_prompt)?",
     re.I,
 )
 
@@ -512,6 +515,20 @@ def discover_attacks(
             attacked_ids = tuple(row["protocol_id"] for row in cohort if int(row["label"]) == source_label)
             expected_count = int(_field(raw, "evaluation_attacked_image_count"))
             if len(attacked_ids) != expected_count:
+                # One mismatch has a known cause worth naming. A per-image
+                # bundle built with PER_IMAGE_ATTACK_COHORT=all attacked every
+                # retained image, including the attack-train half, while this
+                # evaluates the evaluation cohort as every other scope does.
+                # The counts cannot agree, and the bare numbers do not say so.
+                if _field(raw, "per_image_attack_cohort", required=False) == "all":
+                    raise ValueError(
+                        f"{bundle} was built with per_image_attack_cohort=all, "
+                        f"so it attacked {expected_count} images including the "
+                        f"attack-train half, but only {len(attacked_ids)} are in "
+                        "the evaluation cohort this scores. Rebuild it with the "
+                        "default cohort to keep per-image comparable with the "
+                        "other scopes."
+                    )
                 raise ValueError(f"Attacked cohort count is {len(attacked_ids)}, manifest says {expected_count}")
             path_text = _field(
                 raw, "noise_file", "perturbation_file", "perturbation_path",

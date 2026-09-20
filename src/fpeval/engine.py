@@ -256,6 +256,12 @@ def _condition_fields(attack: Attack) -> dict[str, Any]:
         # source dataset rather than reusing the per-dataset delta, so this
         # distinguishes the attack-train partition from the whole dataset.
         "training_source",
+        # Which images per-image attacked. "evaluation" is the cohort every
+        # other scope is scored on, so the scopes stay comparable; "all"
+        # attacks every retained image, which leaks nothing for a delta that
+        # fits the image it attacks but is not the same cohort. A bundle now
+        # records this rather than leaving it to be inferred from the split.
+        "per_image_attack_cohort",
     )
     return {name: attack.record.get(name, "") for name in names}
 

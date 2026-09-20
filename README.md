@@ -177,6 +177,21 @@ per-dataset delta, so its fitted rows appear on the `per_dataset` condition.
 A bundle that ships no `attack_train_indices.csv` is not an error: the held-out
 evaluation does not depend on it, so such a bundle simply yields no fitted rows.
 
+
+### The per-image attack cohort
+
+A per-image bundle records `per_image_attack_cohort`, kept as a result column so
+a row states which images it covers. The generator's default, `evaluation`,
+attacks the cohort every other scope is scored on, which is what keeps the four
+scopes comparable.
+
+`PER_IMAGE_ATTACK_COHORT=all` attacks every retained image, the attack-train
+half included. A delta that fits the image it attacks leaks nothing by doing so,
+but that is not the cohort this evaluates and the counts cannot agree, so such a
+bundle is refused by name rather than as a bare count mismatch. `all` also names
+itself in the setup ID as `_alltargets`, so it can never share a setup ID with
+its comparable twin and be pooled into one condition.
+
 Cost is one extra evaluation pass per bundle. Qualitative samples and saved
 predictions stay with the held-out pass, which is what the benchmark delivers.
 

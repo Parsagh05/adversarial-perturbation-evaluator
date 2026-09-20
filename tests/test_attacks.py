@@ -295,7 +295,7 @@ def test_setup_id_normalization_covers_the_generator_grammar(tmp_path):
     """Mirror setup_catalog.compose_setup_id.
 
     ep{E}[_cat{C}_img{I}]_eps{E}[_margin_topk][_full]
-    [_fullcross|_halfcross][_train{P}][_learnable_prompt],
+    [_fullcross|_halfcross][_train{P}][_alltargets][_learnable_prompt],
     where the budget and epsilon grids are swept and any number may be
     fractional with a decimal point written "p". The historical steps{N}
     spelling still parses. _metadata reads only the path, so the bundle does not
@@ -352,6 +352,14 @@ def test_setup_id_normalization_covers_the_generator_grammar(tmp_path):
          "ep100_eps4_full_fullcross"),
         ("ep100_eps4_full_halfcross_train20_learnable_prompt",
          "learnable_prompt", "ep100_eps4_full_halfcross_train20"),
+        # PER_IMAGE_ATTACK_COHORT=all names itself, so an "all" run and its
+        # comparable twin cannot collapse to one setup ID and be pooled.
+        ("ep100_eps4_alltargets", "frozen_prompt", "ep100_eps4_alltargets"),
+        ("ep100_eps4_full_halfcross_alltargets", "frozen_prompt",
+         "ep100_eps4_full_halfcross_alltargets"),
+        ("ep100_eps4_full_fullcross_train50_alltargets_learnable_prompt",
+         "learnable_prompt",
+         "ep100_eps4_full_fullcross_train50_alltargets"),
         ("ep0p5_cat2_img10_eps0p02_margin_topk_train12p5_learnable_prompt",
          "learnable_prompt",
          "ep0p5_cat2_img10_eps0p02_margin_topk_train12p5"),

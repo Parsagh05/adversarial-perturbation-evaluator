@@ -272,3 +272,42 @@ def test_a_cross_dataset_delta_has_no_fitted_cohort_in_its_target(tmp_path):
         rows = list(csv.DictReader(handle))
     assert rows, "the cross-dataset condition still has to be evaluated"
     assert {row["partition"] for row in rows} == {"evaluation"}
+
+
+def test_an_alltargets_bundle_is_refused_with_its_cause(tmp_path):
+    """PER_IMAGE_ATTACK_COHORT=all attacks more than this scores.
+
+    Such a bundle attacked every retained image, the attack-train half
+    included, while the evaluator scores the evaluation cohort as it does for
+    every other scope. The counts cannot agree, and the bare numbers do not
+    say why, so the refusal names the setting.
+    """
+    _build(tmp_path)
+    bundle = (tmp_path / "attacks" / "setups" / "frozen_prompt" / "ep100_eps2"
+              / "canonical_clip_per_image")
+    perturbation = bundle / "perturbations" / "per_image.pt"
+    perturbation.parent.mkdir(parents=True)
+    fitted = ["test/bottle/good/000", "test/bottle/good/002"]
+    torch.save({"deltas": torch.full((2, 3, 8, 8), 0.1),
+                "sample_ids": fitted}, perturbation)
+    digest = hashlib.sha256(perturbation.read_bytes()).hexdigest()
+    _write(bundle / "evaluation_test_indices.csv", PROTOCOL,
+           [_row("good/000", 0, "evaluation"), _row("crack/001", 1, "evaluation")])
+    _write(bundle / "attack_train_indices.csv", PROTOCOL,
+           [_row("good/002", 0, "attack_train"),
+            _row("crack/003", 1, "attack_train")])
+    _write(bundle / "attack_manifest.csv",
+           [*MANIFEST, "category", "per_image_attack_cohort"],
+           [{"scope": "per_image", "source_dataset": "mvtec",
+             "target_dataset": "mvtec", "direction": "normal_to_abnormal",
+             "source_label": 0, "target_label": 1, "loss_mode": "global",
+             "evaluation_attacked_image_count": 2,   # what "all" attacked
+             "perturbation_file": "perturbations/per_image.pt",
+             "artifact_sha256": digest, "image_size": 8, "epsilon": 0.2,
+             "category": "bottle", "per_image_attack_cohort": "all"}])
+
+    from fpeval.attacks import discover_attacks, materialize_input
+
+    bundles = materialize_input(tmp_path / "attacks", tmp_path / "cache")
+    with pytest.raises(ValueError, match="per_image_attack_cohort=all"):
+        discover_attacks(bundles, scopes=("per_image",), targets=("mvtec",))

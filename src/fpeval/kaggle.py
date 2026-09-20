@@ -19,7 +19,10 @@ SETUP_PATTERN = re.compile(
     rf"(?:_(?:linear|cosine)_step)?"
     rf"(?:_best)?"
     rf"(?:_full(?!cross))?(?:_fullcross|_halfcross)?"
-    rf"(?:_train{_NUMBER})?(?:_learnable_prompt)?",
+    # The per-image attack cohort. "evaluation" is the comparable default and
+    # adds nothing; "all" names itself here so the two cannot share a setup ID
+    # and be pooled as one condition.
+    rf"(?:_train{_NUMBER})?(?:_alltargets)?(?:_learnable_prompt)?",
     re.IGNORECASE,
 )
 
