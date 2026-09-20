@@ -518,13 +518,21 @@ def discover_attacks(
                 "noise_path", "delta_file", "artifact_path",
             )
             # The training half, for runs that also score what the delta was
-            # fitted on. per_image fits the single image it attacks, so it has
-            # no held-out set and no gap to measure; older bundles may ship no
-            # attack_train_indices.csv, and an absent one is not an error here
-            # because the held-out evaluation does not depend on it.
+            # fitted on. Two conditions have no such half. per_image fits the
+            # single image it attacks, so it has no held-out set and no gap to
+            # measure. A delta delivered to a dataset it was not fitted on has
+            # the mirror problem: its fitted images live in the source, so the
+            # target cohort contains none of them and every target image is
+            # already held out. The comparison that would give is reported
+            # anyway, because under halfcross the cross delta IS the
+            # per_dataset delta and its fitted rows appear on that condition.
+            # Comparing the datasets rather than naming the scope keeps this
+            # right for any future condition that crosses. Older bundles may
+            # ship no attack_train_indices.csv, and an absent one is not an
+            # error here because the held-out evaluation does not depend on it.
             train_ids: tuple[str, ...] = ()
             train_attacked_ids: tuple[str, ...] = ()
-            if scope != "per_image":
+            if scope != "per_image" and source == target:
                 if train_protocol is None:
                     train_path = _protocol_path(bundle, "attack_train_indices.csv")
                     if train_path.is_file():

@@ -89,6 +89,28 @@ def _build(root: Path, *, scope: str = "per_dataset", with_train: bool = True) -
     return mvtec
 
 
+def _build_visa(root: Path) -> Path:
+    """VisA is driven by split_csv/1cls.csv, not by walking directories."""
+    visa = root / "visa"
+    rows = []
+    for sub, label, index in (("normal", "normal", 0), ("anomaly", "anomaly", 1)):
+        rel = f"candle/test/{sub}/00{index}.png"
+        path = visa / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        Image.fromarray(np.full((8, 8, 3), index * 255, dtype=np.uint8)).save(path)
+        mask_rel = ""
+        if sub == "anomaly":
+            mask_rel = f"candle/ground_truth/{sub}/00{index}_mask.png"
+            mask = visa / mask_rel
+            mask.parent.mkdir(parents=True, exist_ok=True)
+            Image.fromarray(np.full((8, 8), 255, dtype=np.uint8)).save(mask)
+        rows.append({"object": "candle", "split": "test", "label": label,
+                     "image": rel, "mask": mask_rel})
+    _write(visa / "split_csv" / "1cls.csv",
+           ["object", "split", "label", "image", "mask"], rows)
+    return visa
+
+
 def _run(tmp_path: Path, mvtec: Path, **overrides):
     settings = dict(
         attacks_root=str(tmp_path / "attacks"),
@@ -191,4 +213,62 @@ def test_a_bundle_without_the_training_protocol_still_evaluates(tmp_path):
     """Older bundles ship no attack_train_indices.csv; held-out is unaffected."""
     mvtec = _build(tmp_path, with_train=False)
     _, rows = _run(tmp_path, mvtec, evaluate_attack_train=True)
+    assert {row["partition"] for row in rows} == {"evaluation"}
+
+
+def test_a_cross_dataset_delta_has_no_fitted_cohort_in_its_target(tmp_path):
+    """A delta delivered to a dataset it was not fitted on.
+
+    Its fitted images live in the source, so the target cohort contains none
+    of them: there is no attack_train partition there to score. Before this
+    was handled, discovery still collected the source IDs and the engine
+    refused them as absent from the target, so turning the flag on crashed
+    every cross-dataset condition.
+    """
+    mvtec = _build(tmp_path)          # the images and a same-dataset bundle
+    visa = _build_visa(tmp_path)
+
+    bundle = (tmp_path / "attacks" / "setups" / "frozen_prompt" / "ep100_eps2"
+              / "canonical_clip_cross_dataset")
+    perturbation = bundle / "perturbations" / "normal.pt"
+    perturbation.parent.mkdir(parents=True)
+    torch.save({"delta": torch.full((3, 8, 8), 0.1)}, perturbation)
+    digest = hashlib.sha256(perturbation.read_bytes()).hexdigest()
+    # Held out: the VisA images the delta is delivered to. Fitted: MVTec.
+    _write(bundle / "evaluation_test_indices.csv", PROTOCOL, [
+        {"protocol_id": "test/visa/candle/normal/000", "dataset": "visa",
+         "category": "candle", "label": 0, "partition": "evaluation"},
+        {"protocol_id": "test/visa/candle/anomaly/001", "dataset": "visa",
+         "category": "candle", "label": 1, "partition": "evaluation"}])
+    _write(bundle / "attack_train_indices.csv", PROTOCOL,
+           [_row("good/002", 0, "attack_train"),
+            _row("crack/003", 1, "attack_train")])
+    _write(bundle / "attack_manifest.csv", MANIFEST,
+           [{"scope": "cross_dataset", "source_dataset": "mvtec",
+             "target_dataset": "visa", "direction": "normal_to_abnormal",
+             "source_label": 0, "target_label": 1, "loss_mode": "global",
+             "evaluation_attacked_image_count": 1,
+             "perturbation_file": "perturbations/normal.pt",
+             "artifact_sha256": digest, "image_size": 8, "epsilon": 0.2}])
+
+    from fpeval.attacks import discover_attacks, materialize_input
+
+    bundles = materialize_input(tmp_path / "attacks", tmp_path / "cache")
+    attacks = discover_attacks(bundles, scopes=("cross_dataset",), targets=("visa",))
+    assert len(attacks) == 1
+    # The MVTec IDs are never collected, so the engine is never asked for them.
+    assert attacks[0].train_ids == ()
+    assert attacks[0].train_attacked_ids == ()
+
+    output = evaluate(EvaluationConfig(
+        attacks_root=str(tmp_path / "attacks"),
+        output_root=str(tmp_path / "results"), model="train_partition_probe",
+        model_kwargs_by_target={"visa": {}}, visa_root=str(visa),
+        targets=("visa",), scopes=("cross_dataset",), device="cpu",
+        image_size=8, batch_size=2, gaussian_sigma=0,
+        pixel_threshold_modes=("fixed_0_5",), save_qualitative_samples=False,
+        create_output_archives=False, evaluate_attack_train=True))
+    with (output / "summary.csv").open(newline="") as handle:
+        rows = list(csv.DictReader(handle))
+    assert rows, "the cross-dataset condition still has to be evaluated"
     assert {row["partition"] for row in rows} == {"evaluation"}

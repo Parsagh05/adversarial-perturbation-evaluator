@@ -160,14 +160,22 @@ Thresholds stay calibrated on the held-out cohort and are then frozen, so both
 partitions are scored against the same operating points. Recalibrating on the
 fitted images would give them their own and make the two incomparable.
 
-It applies to three of the four scopes. `per_dataset`, `per_category` and
-`cross_dataset` fit one shared tensor and hold images back, so the delta can be
-applied to the training half after the fact - no regeneration is needed, since
-every bundle already ships `attack_train_indices.csv`. `per_image` fits the
-single image it attacks and holds nothing back, so there is no gap to measure and
-it produces held-out rows only. A bundle that ships no `attack_train_indices.csv`
-is not an error: the held-out evaluation does not depend on it, so such a bundle
-simply yields no fitted rows.
+It applies where the fitted images are inside the cohort being scored, which is
+`per_dataset` and `per_category`. Both fit one shared tensor and hold images
+back, so the delta can be applied to the training half after the fact - no
+regeneration is needed, since every bundle already ships
+`attack_train_indices.csv`.
+
+Two conditions have no fitted cohort to score. `per_image` fits the single image
+it attacks and holds nothing back. A condition whose `source_dataset` differs
+from its `target_dataset` has the mirror problem: the delta was fitted on the
+source, so the target contains none of those images and every target image is
+already held out. Both produce held-out rows only. The comparison the second
+would give is reported anyway - under `halfcross` the cross delta *is* the
+per-dataset delta, so its fitted rows appear on the `per_dataset` condition.
+
+A bundle that ships no `attack_train_indices.csv` is not an error: the held-out
+evaluation does not depend on it, so such a bundle simply yields no fitted rows.
 
 Cost is one extra evaluation pass per bundle. Qualitative samples and saved
 predictions stay with the held-out pass, which is what the benchmark delivers.
