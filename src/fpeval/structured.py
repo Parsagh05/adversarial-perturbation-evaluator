@@ -11,6 +11,8 @@ from pathlib import Path
 import re
 from typing import Any, Iterable
 
+from .provenance import write_json
+
 
 GROUP_FIELDS = (
     "prompt_mode",
@@ -117,7 +119,14 @@ def write_separated_numerical(
     manifest_records: Iterable[dict[str, Any]],
     thresholds: dict[str, Any],
     config: Any,
+    run_config: dict[str, Any] | None = None,
 ) -> None:
+    """Write the per-condition tree.
+
+    `run_config` is the finished record from the consolidated run, so each slice
+    carries the same provenance rather than a bare `asdict(config)`. It stays
+    optional: a caller that passes nothing still gets the former contents.
+    """
     grouped: dict[tuple[str, ...], dict[str, list[dict[str, Any]]]] = defaultdict(
         lambda: {"summary": [], "category": [], "image": [], "manifest": []}
     )
@@ -130,7 +139,7 @@ def write_separated_numerical(
         for row in rows:
             grouped[_key(row)][name].append(row)
 
-    config_payload = asdict(config)
+    config_payload = dict(run_config) if run_config else asdict(config)
     config_payload["resolved_model_settings_by_target"] = thresholds.get(
         "resolved_model_settings_by_target", {}
     )
@@ -159,7 +168,4 @@ def write_separated_numerical(
         )
         slice_config = dict(config_payload)
         slice_config["structured_slice"] = dict(zip(GROUP_FIELDS, _key(reference)))
-        (numerical / "run_config.json").write_text(
-            json.dumps(slice_config, indent=2, default=_json_value),
-            encoding="utf-8",
-        )
+        write_json(numerical / "run_config.json", slice_config, default=_json_value)

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from dataclasses import asdict
 import csv
-import json
 import math
 from pathlib import Path
 from collections import defaultdict
@@ -32,6 +31,12 @@ from .metrics import (
     targeted_images,
     targeted_pixels,
     topk_region,
+)
+from .provenance import (
+    RunRecord,
+    attacks as provenance_attacks,
+    cohort as provenance_cohort,
+    write_json,
 )
 from .qualitative import export_samples
 from .structured import (
@@ -719,6 +724,33 @@ def evaluate(config: EvaluationConfig) -> Path:
         )
     if config.max_conditions:
         attacks = attacks[: config.max_conditions]
+
+    # Written before any inference, so a run that dies still says what it was
+    # asked to do and against which bundles.
+    record = RunRecord(output / "run_config.json", asdict(config))
+    record.update(attacks=provenance_attacks(attacks))
+    manifest_snapshot = [attack.record for attack in attacks]
+    write_json(output / "manifest_snapshot.json", manifest_snapshot, default=_json_value)
+    try:
+        return _run_conditions(
+            config, output, structured_output, structured_samples_output,
+            attacks, manifest_snapshot, record,
+        )
+    except BaseException as error:  # noqa: BLE001 - recorded, then re-raised
+        record.finish("failed", f"{type(error).__name__}: {error}")
+        raise
+
+
+def _run_conditions(
+    config: EvaluationConfig,
+    output: Path,
+    structured_output: Path,
+    structured_samples_output: Path,
+    attacks: list[Attack],
+    manifest_snapshot: list[dict[str, Any]],
+    record: RunRecord,
+) -> Path:
+    """Score every selected condition. Split out so the caller can record a crash."""
     all_summary: list[dict[str, Any]] = []
     all_categories: list[dict[str, Any]] = []
     all_images: list[dict[str, Any]] = []
@@ -774,6 +806,7 @@ def evaluate(config: EvaluationConfig) -> Path:
             model_settings = adapter.runtime_metadata()
             model_settings["shared_gaussian_sigma"] = config.gaussian_sigma
             resolved_model_settings[target] = model_settings
+            record.resolved(resolved_model_settings)
             raw_clean = _predict_clean(adapter, fixed_samples, config)
             clean = _postprocess_predictions(adapter, fixed_samples, raw_clean)
             thresholds = _calibrate_clean(target, calibration_samples, clean, config)
@@ -862,20 +895,14 @@ def evaluate(config: EvaluationConfig) -> Path:
     _write_csv(output / "summary.csv", all_summary)
     _write_csv(output / "category_metrics.csv", all_categories)
     _write_csv(output / "per_image.csv", all_images)
-    config_payload = asdict(config)
-    config_payload["resolved_model_settings_by_target"] = resolved_model_settings
     threshold_payload["resolved_model_settings_by_target"] = resolved_model_settings
-    (output / "thresholds.json").write_text(
-        json.dumps(threshold_payload, indent=2, default=_json_value), encoding="utf-8"
-    )
-    # Checkpoint locations are provenance, but their contents are never copied.
-    (output / "run_config.json").write_text(
-        json.dumps(config_payload, indent=2, default=_json_value), encoding="utf-8"
-    )
-    manifest_snapshot = [attack.record for attack in attacks]
-    (output / "manifest_snapshot.json").write_text(
-        json.dumps(manifest_snapshot, indent=2, default=_json_value), encoding="utf-8"
-    )
+    write_json(output / "thresholds.json", threshold_payload, default=_json_value)
+    # Checkpoints are named and hashed, never copied: the hash is what pins the
+    # weights a number came from without carrying gigabytes alongside it.
+    record.update(cohort=provenance_cohort(all_images, manifest_snapshot))
+    record.finish("completed")
+    config_payload = record.payload
+    write_json(output / "manifest_snapshot.json", manifest_snapshot, default=_json_value)
     # The separated tree and the qualitative samples are both filed under the
     # setup and prompt mode of an attack, so a clean-only run has nowhere to put
     # them and produces the consolidated directory alone.
@@ -889,6 +916,7 @@ def evaluate(config: EvaluationConfig) -> Path:
             manifest_records=manifest_snapshot,
             thresholds=threshold_payload,
             config=config,
+            run_config=config_payload,
         )
     if config.create_output_archives:
         # Extraction is a disposable input cache, not an evaluation result.
