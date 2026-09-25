@@ -1,4 +1,4 @@
-"""run_config.json is written before the run, not only after it.
+"""run_config_<model>.json is written before the run, not only after it.
 
 The failure this guards against: a run that crashes used to leave no record at
 all of what it had been asked to do, because every JSON file was written after
@@ -7,7 +7,7 @@ missing - the evaluator's own commit, the checkpoint hashes, the attack
 manifest each result came from.
 
 The compatibility test is the important one. Analysis scripts read
-run_config.json by key (`run_metadata.replicate`, among others), so every key
+the record by key (`run_metadata.replicate`, among others), so every key
 the old version wrote must still be there with the same value.
 """
 
@@ -89,7 +89,8 @@ def _config(tmp_path: Path, mvtec: Path, **overrides) -> EvaluationConfig:
 
 
 def _run_config(output: Path) -> dict:
-    return json.loads((output / "run_config.json").read_text(encoding="utf-8"))
+    # Named for its model, inside that model's folder.
+    return json.loads((output / f"run_config_{output.name}.json").read_text(encoding="utf-8"))
 
 
 # --------------------------------------------------------------- compatibility
@@ -104,7 +105,7 @@ def test_every_key_the_old_version_wrote_is_unchanged(tmp_path):
 
     former = asdict(config)
     for key, value in former.items():
-        assert key in payload, f"run_config.json lost {key}"
+        assert key in payload, f"the per-model record lost {key}"
         # Tuples round-trip through JSON as lists, exactly as they always did.
         expected = list(value) if isinstance(value, tuple) else value
         assert payload[key] == expected, f"{key} changed value"
@@ -159,7 +160,7 @@ def test_the_record_exists_before_any_inference(tmp_path):
     output = Path(config.output_root) / "zero_shot" / "provenance_exploding_probe"
     # manifest_snapshot.json is copied up front too, for the same reason.
     assert (output / "manifest_snapshot.json").exists()
-    assert not (output / "run_config.json.tmp").exists(), "atomic write left a temp file"
+    assert not list(output.glob("*.tmp")), "atomic write left a temp file"
 
 
 # ------------------------------------------------------------------- helpers

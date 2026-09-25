@@ -921,6 +921,42 @@ Use `targets`, `scopes`, `prompt_modes`, `setup_ids`, `source_datasets`,
 subset. `max_conditions: 1` is useful for plumbing checks and must not be
 reported as a complete benchmark.
 
+### Several models in one run
+
+A config names one `model`, or several under `models`
+(`configs/multi_model.example.json`). Everything outside `models` is shared; a
+model entry may set only `model_kwargs_by_target`, `batch_size`, `device`, and
+its own `separated_output_root` / `separated_samples_output_root`. Anything else
+- the attacks, filters, image size, metrics - is refused per model, so every
+model of one run scores the same conditions and the results stay comparable.
+Every model's config is validated, and existing results are checked, before the
+first model loads. The models then run one after another; one that fails is
+recorded and the next still runs, and the run exits with an error naming every
+failed model. On Kaggle, mind the session limit when listing many models.
+
+`<output_root>/evaluator_config.json` is written before the first model loads
+and updated as each starts and finishes. It holds:
+
+- `models`, and `per_model` with each model's regime, its own settings, status,
+  start and finish times, error, the path of its `run_config_<model>.json`, and
+  `outputs` - the resolved folders and files it writes (predictions, separated
+  results, samples and archives are `null` or empty when switched off);
+- `settings`: every shared setting (targets, scopes, filters, image size,
+  thresholds, `output_root`, `attacks_root`, the extraction cache);
+- `attack_settings`: one entry per evaluated bundle, in the generator's own
+  words - the `setup`, `hyperparameters` and `execution` sections of its
+  `generation_config.json` (optimiser, precision, margin top-k, hinge,
+  momentum, surrogate layers) when the bundle has one, and for every bundle its
+  manifest columns as `constant` values or `varying` ones, the latter per
+  direction where each direction has one value (the margin top-k fraction);
+- status, timestamps, host, GPU, torch/CUDA/Python versions, the evaluator's
+  commit and the exact command line.
+
+What only one model knows - the settings it actually loaded with, its upstream
+repository commit and checkpoint hashes, its cohort counts - is in that
+model's `run_config_<model>.json`. A second run into the same `output_root`
+keeps the earlier record as `evaluator_config.<created time>.json`.
+
 ## Outputs
 
 Every path below sits under a regime folder, `zero_shot/` or `few_shot/`, so a
@@ -929,15 +965,19 @@ adapter's constructor - one that takes a `k_shot` or `shot` reference-set size
 is few-shot - so it follows the adapter and needs no configuration.
 
 ```text
+<output_root>/
+  evaluator_config.json        # the whole run; written before any model loads
+  extracted_attacks/           # ZIP cache shared by a multi-model run
+
 <output_root>/<regime>/<model>/
   summary.csv
   category_metrics.csv
   per_image.csv
   thresholds.json
-  run_config.json
+  run_config_<model>.json      # what only this model knows
   manifest_snapshot.json
   predictions/                 # only when save_predictions=true
-  extracted_attacks/           # ZIP cache; ignored by numerical outputs
+  extracted_attacks/           # ZIP cache of a single-model run
 
 <output_root>/<regime>/<model>_separated/
   setups/<settings>/<scope>/ep<budget>/<frozen_prompt|learnable_prompt>/

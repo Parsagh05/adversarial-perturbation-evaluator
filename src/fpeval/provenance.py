@@ -1,6 +1,10 @@
 """Provenance for an evaluation run, written before any inference happens.
 
-`run_config.json` used to be written only once every metric had been computed,
+Two records: `<output_root>/evaluator_config.json` for the whole invocation
+(see `run.py`), and `run_config_<model>.json` in each model's folder for what
+only that model knows - its loaded settings, repositories and checkpoints.
+
+The per-model record used to be written only once every metric had been computed,
 so a run that crashed left no record of what it had been asked to do. It is now
 written at the start with ``status: "running"``, updated as soon as the resolved
 model settings are known, and rewritten at the end as ``"completed"`` or
@@ -212,6 +216,77 @@ def attacks(evaluated: list[Attack]) -> list[dict[str, Any]]:
     return list(by_bundle.values())
 
 
+# The parts of the generator's generation_config.json that say how the attack
+# was set up. Its code, data and environment sections describe the generator's
+# own run, not the setup, and stay pinned by the file's hash.
+GENERATION_SECTIONS = ("setup", "hyperparameters", "execution")
+# A setting with more distinct values than this across one bundle is a
+# per-condition identifier (a file name, a hash), not a setting to read here;
+# manifest_snapshot.json keeps every value.
+DISTINCT_LIMIT = 10
+
+
+def _manifest_settings(records: list[dict[str, Any]]) -> dict[str, Any]:
+    """The bundle's manifest columns: one value, one per direction, or several."""
+
+    constant: dict[str, Any] = {}
+    varying: dict[str, Any] = {}
+    for column in sorted({key for record in records for key in record}):
+        values = sorted({str(record.get(column, "")) for record in records})
+        if len(values) == 1:
+            constant[column] = values[0]
+            continue
+        # Most settings that vary inside a bundle vary by attack direction (the
+        # margin top-k fraction, the source and target labels), and a flat list
+        # of values would lose which direction had which.
+        by_direction: dict[str, set[str]] = {}
+        for record in records:
+            by_direction.setdefault(str(record.get("direction", "")), set()).add(
+                str(record.get(column, ""))
+            )
+        if column != "direction" and all(len(found) == 1 for found in by_direction.values()):
+            varying[column] = {"by_direction": {
+                direction: next(iter(found)) for direction, found in sorted(by_direction.items())
+            }}
+        elif len(values) <= DISTINCT_LIMIT:
+            varying[column] = {"values": values}
+        else:
+            varying[column] = {"distinct_values": len(values)}
+    return {"constant": constant, "varying": varying}
+
+
+def attack_settings(evaluated: list[Attack]) -> list[dict[str, Any]]:
+    """How every evaluated bundle was set up, in the generator's own words.
+
+    Copied, never re-derived: the generation_config.json sections when the
+    bundle has one (every bundle generated since it was introduced), and the
+    attack manifest's columns for every bundle, older ones included.
+    """
+
+    grouped: dict[str, list[Attack]] = {}
+    for attack in evaluated:
+        grouped.setdefault(str(Path(attack.bundle)), []).append(attack)
+    entries = []
+    for bundle, members in grouped.items():
+        generation = _bundle_file(Path(bundle), "generation_config.json")
+        if generation is not None:
+            try:
+                raw = json.loads(Path(generation["path"]).read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                raw = None
+            if isinstance(raw, dict):
+                generation.update({section: raw.get(section) for section in GENERATION_SECTIONS})
+            else:
+                generation["unreadable"] = True
+        entries.append({
+            "bundle": bundle,
+            "conditions": len(members),
+            "generation_config": generation,
+            "manifest": _manifest_settings([attack.record for attack in members]),
+        })
+    return entries
+
+
 def cohort(image_rows: list[dict[str, Any]],
            manifest_records: list[dict[str, Any]]) -> dict[str, Any]:
     """Split hashes and image counts, per target, partition and label."""
@@ -245,7 +320,7 @@ def cohort(image_rows: list[dict[str, Any]],
 
 
 class RunRecord:
-    """The run_config.json writer: start, update, finish - always atomically."""
+    """The run_config_<model>.json writer: start, update, finish - always atomically."""
 
     def __init__(self, path: Path, base: dict[str, Any]) -> None:
         self.path = Path(path)

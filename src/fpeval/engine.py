@@ -688,33 +688,44 @@ def _evaluate_condition(
     return summary_rows, category_rows, per_image_rows, predictions, delta, delta_index
 
 
-def evaluate(config: EvaluationConfig) -> Path:
-    """Run all selected setup/scope conditions and return the model output root."""
+def run_config_name(model: str) -> str:
+    """The model-specific record, named for its model so copies never collide."""
+    return f"run_config_{model}.json"
+
+
+def output_paths(config: EvaluationConfig) -> dict[str, Path]:
+    """Where one model's run writes. evaluate() and the run record both use this."""
     # Zero-shot and few-shot results land in their own subtree, so a run of one
     # regime never interleaves with the other under a shared output root.
     regime_root = (
         Path(config.output_root).expanduser().resolve() / regime(config.model)
     )
     output = regime_root / config.model
-    structured_output = separated_root(
-        regime_root, config.model, config.separated_output_root
-    )
-    structured_samples_output = model_sibling_root(
-        regime_root,
-        config.model,
-        "_samples_separated",
-        config.separated_samples_output_root,
-    )
-    existing = output / "summary.csv"
-    if existing.exists() and not config.overwrite:
-        raise FileExistsError(f"Results already exist: {existing}; set overwrite=true")
-    output.mkdir(parents=True, exist_ok=True)
+    return {
+        "model": output,
+        "separated": separated_root(
+            regime_root, config.model, config.separated_output_root
+        ),
+        "samples": model_sibling_root(
+            regime_root, config.model, "_samples_separated",
+            config.separated_samples_output_root,
+        ),
+        "extraction_cache": (
+            Path(config.extraction_cache).expanduser().resolve()
+            if config.extraction_cache else output / "extracted_attacks"
+        ),
+    }
+
+
+def select_attacks(config: EvaluationConfig) -> list[Attack]:
+    """Every condition this config selects, in the order they will run."""
     if config.attacks_root is None:
         # clean_only without a manifest: the cohort is the mounted test split.
         attacks: list[Attack] = []
     else:
-        cache = Path(config.extraction_cache).expanduser().resolve() if config.extraction_cache else output / "extracted_attacks"
-        bundles = materialize_input(config.attacks_root, cache)
+        bundles = materialize_input(
+            config.attacks_root, output_paths(config)["extraction_cache"]
+        )
         attacks = discover_attacks(
             bundles, scopes=config.scopes, targets=config.targets,
             prompt_modes=config.prompt_modes, setup_ids=config.setup_ids,
@@ -724,10 +735,24 @@ def evaluate(config: EvaluationConfig) -> Path:
         )
     if config.max_conditions:
         attacks = attacks[: config.max_conditions]
+    return attacks
+
+
+def evaluate(config: EvaluationConfig) -> Path:
+    """Run all selected setup/scope conditions and return the model output root."""
+    paths = output_paths(config)
+    output = paths["model"]
+    structured_output = paths["separated"]
+    structured_samples_output = paths["samples"]
+    existing = output / "summary.csv"
+    if existing.exists() and not config.overwrite:
+        raise FileExistsError(f"Results already exist: {existing}; set overwrite=true")
+    output.mkdir(parents=True, exist_ok=True)
+    attacks = select_attacks(config)
 
     # Written before any inference, so a run that dies still says what it was
     # asked to do and against which bundles.
-    record = RunRecord(output / "run_config.json", asdict(config))
+    record = RunRecord(output / run_config_name(config.model), asdict(config))
     record.update(attacks=provenance_attacks(attacks))
     manifest_snapshot = [attack.record for attack in attacks]
     write_json(output / "manifest_snapshot.json", manifest_snapshot, default=_json_value)

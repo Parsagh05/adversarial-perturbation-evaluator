@@ -1,0 +1,55 @@
+{
+  "attacks_root": "/path/to/perturbations",
+  "output_root": "/path/to/results",
+  "mvtec_root": "/path/to/mvtec_anomaly_detection",
+  "visa_root": "/path/to/VisA_20220922",
+  "targets": [
+    "mvtec",
+    "visa"
+  ],
+  "scopes": [
+    "per_dataset",
+    "cross_dataset",
+    "per_category",
+    "per_image"
+  ],
+  "device": "cuda",
+  "batch_size": 8,
+  "image_size": 518,
+  "gaussian_sigma": 4.0,
+  "max_sample_conditions": 25,
+  "qualitative_threshold_modes": [
+    "clean_pixel_f1"
+  ],
+  "models": {
+    "afclip": {
+      "model_kwargs_by_target": {
+        "mvtec": {
+          "repository": "/path/to/AF-CLIP",
+          "target_dataset": "mvtec",
+          "clip_download_root": "/path/to/clip_cache"
+        },
+        "visa": {
+          "repository": "/path/to/AF-CLIP",
+          "target_dataset": "visa",
+          "clip_download_root": "/path/to/clip_cache"
+        }
+      }
+    },
+    "anomalyclip": {
+      "batch_size": 4,
+      "model_kwargs_by_target": {
+        "mvtec": {
+          "repository": "/path/to/AnomalyCLIP",
+          "checkpoint": "/path/to/AnomalyCLIP/checkpoints/9_12_4_multiscale/epoch_15.pth",
+          "download_root": "/path/to/clip_cache"
+        },
+        "visa": {
+          "repository": "/path/to/AnomalyCLIP",
+          "checkpoint": "/path/to/AnomalyCLIP/checkpoints/9_12_4_multiscale_visa/epoch_15.pth",
+          "download_root": "/path/to/clip_cache"
+        }
+      }
+    }
+  }
+}
