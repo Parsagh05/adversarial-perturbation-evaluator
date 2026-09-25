@@ -16,13 +16,14 @@ SETUP_PATTERN = re.compile(
     rf"_eps{_NUMBER}"
     rf"(?:_ce_focal_dice|_margin_topk|_hinge{_NUMBER})?"
     rf"(?:_mom{_NUMBER})?"
+    rf"(?:_sga(?:k\d+)?(?:ib\d+)?)?"
     rf"(?:_(?:linear|cosine)_step)?"
     rf"(?:_best)?"
     rf"(?:_full(?!cross))?(?:_fullcross|_halfcross)?"
     # The per-image attack cohort. "evaluation" is the comparable default and
     # adds nothing; "all" names itself here so the two cannot share a setup ID
     # and be pooled as one condition.
-    rf"(?:_train{_NUMBER})?(?:_alltargets)?(?:_learnable_prompt)?",
+    rf"(?:_train{_NUMBER})?(?:_alltargets)?(?:_random)?(?:_learnable_prompt)?",
     re.IGNORECASE,
 )
 

@@ -29,8 +29,8 @@ SCOPE_NAMES = {
 # here.
 DATASET_LEVEL_SCOPES = frozenset({"per_dataset", "cross_dataset"})
 DIRECTION_LABELS = {"normal_to_abnormal": (0, 1), "abnormal_to_normal": (1, 0)}
-# ep{E}[_cat{C}_img{I}]_eps{E}[_ce_focal_dice][_full]
-# [_fullcross|_halfcross][_train{P}][_learnable_prompt],
+# ep{E}[_cat{C}_img{I}]_eps{E}[_ce_focal_dice][_sga[k{K}][ib{B}]][_full]
+# [_fullcross|_halfcross][_train{P}][_alltargets][_random][_learnable_prompt],
 # matching setup_catalog.compose_setup_id. Every number may be fractional, with
 # "p" for the decimal point (ep7p14, eps0p02, train12p5).
 #
@@ -58,6 +58,9 @@ SETUP_PATTERN = re.compile(
     # names only its displacement hinge. _margin_topk is the pre-flip spelling.
     rf"(?:_ce_focal_dice|_margin_topk|_hinge{_NUMBER})?"
     rf"(?:_mom{_NUMBER})?"
+    # OPTIMIZER=sga; pgd adds nothing. SGA's defaults (K = 4, inner batch 2)
+    # add nothing beyond "sga", any other value names itself: sgak1, sgaib1.
+    rf"(?:_sga(?:k\d+)?(?:ib\d+)?)?"
     rf"(?:_(?:linear|cosine)_step)?"
     rf"(?:_best)?"
     # "_full" is the split protocol and "_fullcross" the cross data mode; the
@@ -67,7 +70,9 @@ SETUP_PATTERN = re.compile(
     # The per-image attack cohort. "evaluation" is the comparable default and
     # adds nothing; "all" names itself here so the two cannot share a setup ID
     # and be pooled as one condition.
-    rf"(?:_train{_NUMBER})?(?:_alltargets)?(?:_learnable_prompt)?",
+    # "_random" is RANDOM_BASELINE, the unoptimised control delta; it must never
+    # share a setup ID with the optimised run it controls for.
+    rf"(?:_train{_NUMBER})?(?:_alltargets)?(?:_random)?(?:_learnable_prompt)?",
     re.I,
 )
 

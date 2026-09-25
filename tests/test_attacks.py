@@ -294,8 +294,8 @@ def test_full_non_cross_dataset_still_uses_only_evaluation_partition(tmp_path):
 def test_setup_id_normalization_covers_the_generator_grammar(tmp_path):
     """Mirror setup_catalog.compose_setup_id.
 
-    ep{E}[_cat{C}_img{I}]_eps{E}[_margin_topk][_full]
-    [_fullcross|_halfcross][_train{P}][_alltargets][_learnable_prompt],
+    ep{E}[_cat{C}_img{I}]_eps{E}[_margin_topk][_sga[k{K}][ib{B}]][_full]
+    [_fullcross|_halfcross][_train{P}][_alltargets][_random][_learnable_prompt],
     where the budget and epsilon grids are swept and any number may be
     fractional with a decimal point written "p". The historical steps{N}
     spelling still parses. _metadata reads only the path, so the bundle does not
@@ -382,12 +382,31 @@ def test_setup_id_normalization_covers_the_generator_grammar(tmp_path):
         ("ep100_eps4_cosine_step", "frozen_prompt", "ep100_eps4_cosine_step"),
         ("ep100_eps4_linear_step_best", "frozen_prompt",
          "ep100_eps4_linear_step_best"),
+        # OPTIMIZER=sga names itself after momentum; its defaults (inner batch
+        # 2, K = 4) add nothing, any other value names itself. pgd adds nothing.
+        ("ep100_eps4_sga_fullcross", "frozen_prompt", "ep100_eps4_sga_fullcross"),
+        ("ep100_eps4_sgak1_fullcross", "frozen_prompt", "ep100_eps4_sgak1_fullcross"),
+        ("ep100_eps4_sgaib1_fullcross", "frozen_prompt", "ep100_eps4_sgaib1_fullcross"),
+        ("ep100_eps4_sgak1ib1_fullcross", "frozen_prompt",
+         "ep100_eps4_sgak1ib1_fullcross"),
+        ("ep100_eps4_mom0p9_sga_cosine_step", "frozen_prompt",
+         "ep100_eps4_mom0p9_sga_cosine_step"),
+        # RANDOM_BASELINE=true is an unoptimised control and names itself last.
+        ("ep100_eps4_full_fullcross_random", "frozen_prompt",
+         "ep100_eps4_full_fullcross_random"),
+        ("ep100_eps4_fullcross_random_learnable_prompt", "learnable_prompt",
+         "ep100_eps4_fullcross_random"),
         # Everything at once, in the generator's component order.
         ("ep100_cross7p14_cat50_img20_eps0p02_hinge0p5_mom0p9_cosine_step_best"
          "_full_fullcross_train12p5_learnable_prompt",
          "learnable_prompt",
          "ep100_cross7p14_cat50_img20_eps0p02_hinge0p5_mom0p9_cosine_step_best"
          "_full_fullcross_train12p5"),
+        ("ep100_cross7p14_cat50_img20_eps0p02_hinge0p5_mom0p9_sgak1ib1_cosine_step"
+         "_best_full_fullcross_train12p5_alltargets_random_learnable_prompt",
+         "learnable_prompt",
+         "ep100_cross7p14_cat50_img20_eps0p02_hinge0p5_mom0p9_sgak1ib1_cosine_step"
+         "_best_full_fullcross_train12p5_alltargets_random"),
     ]
     seen = set()
     for directory, expected_mode, expected_id in cases:

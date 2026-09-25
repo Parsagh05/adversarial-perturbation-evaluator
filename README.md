@@ -54,7 +54,7 @@ balanced/full split protocol: `_halfcross` reuses that perturbation on the other
 dataset's evaluation partition, while `_fullcross` trains and evaluates on both
 retained partitions of the respective source and target datasets. Setup IDs
 follow
-`ep{E}[_cross{X}][_cat{C}_img{I}]_eps{E}[_ce_focal_dice|_hinge{H}][_mom{M}][_linear_step|_cosine_step][_best][_full][_fullcross|_halfcross][_train{P}][_learnable_prompt]`,
+`ep{E}[_cross{X}][_cat{C}_img{I}]_eps{E}[_ce_focal_dice|_hinge{H}][_mom{M}][_sga[k{K}][ib{B}]][_linear_step|_cosine_step][_best][_full][_fullcross|_halfcross][_train{P}][_alltargets][_random][_learnable_prompt]`,
 mirroring the generator's `compose_setup_id`. The budget and epsilon grids are
 swept, so neither is a fixed set, and any number may be fractional with a
 decimal point written `p` (`ep7p14`, `eps0p02`, `train12p5`). The generator
@@ -78,8 +78,12 @@ appears only when cross-dataset takes an epoch budget of its own. The remaining
 components each name a setting that changes the perturbation and is absent at
 its default: `_hinge{H}` the margin displacement hinge, which only a margin_topk
 setup can carry since ce_focal_dice is already bounded; `_mom{M}` the momentum
-decay; `_linear_step` or `_cosine_step` the step-size schedule, where `constant`
-adds nothing; and `_best` the returned iterate, where `final` adds nothing. The
+decay; `_sga` the SGA optimiser, where sign-PGD adds nothing and SGA's defaults
+(K = 4 passes, inner batch 2) add nothing beyond `sga`, while any other value
+names itself (`_sgak1`, `_sgaib1`, `_sgak1ib1`); `_linear_step` or `_cosine_step`
+the step-size schedule, where `constant` adds nothing; `_best` the returned
+iterate, where `final` adds nothing; and `_random` the unoptimised random-sign
+control delta, which must never share a setup ID with the run it controls for. The
 `_train{P}` component appears only when the attack-train fraction is below 1.0,
 and it is preserved: a 20% run and a full run are different setups. Every
 optional component must be parsed, because an unmatched one truncates the ID
