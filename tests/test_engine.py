@@ -151,6 +151,63 @@ def test_end_to_end_fixed_cohort(tmp_path):
     assert not (results_root / "test_adapter_samples.zip").exists()
 
 
+def test_image_metrics_only_skips_aupro_and_samples(tmp_path):
+    mvtec = tmp_path / "mvtec"
+    good = mvtec / "bottle" / "test" / "good" / "000.png"
+    crack = mvtec / "bottle" / "test" / "crack" / "001.png"
+    mask = mvtec / "bottle" / "ground_truth" / "crack" / "001_mask.png"
+    for path, value in ((good, 0), (crack, 255), (mask, 255)):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        Image.fromarray(np.full((8, 8, 3) if path != mask else (8, 8), value, dtype=np.uint8)).save(path)
+
+    bundle = tmp_path / "attacks" / "setups" / "frozen_prompt" / "steps500_eps2" / "canonical_clip_per_dataset"
+    perturbation = bundle / "perturbations" / "normal.pt"
+    perturbation.parent.mkdir(parents=True)
+    torch.save({"delta": torch.full((3, 8, 8), 0.1)}, perturbation)
+    digest = hashlib.sha256(perturbation.read_bytes()).hexdigest()
+    _csv(bundle / "evaluation_test_indices.csv", ["protocol_id", "dataset", "category", "label", "partition"], [
+        {"protocol_id": "test/bottle/good/000", "dataset": "mvtec", "category": "bottle", "label": 0, "partition": "evaluation"},
+        {"protocol_id": "test/bottle/crack/001", "dataset": "mvtec", "category": "bottle", "label": 1, "partition": "evaluation"},
+    ])
+    record = {
+        "scope": "per_dataset", "source_dataset": "mvtec", "target_dataset": "mvtec",
+        "direction": "normal_to_abnormal", "source_label": 0, "target_label": 1,
+        "loss_mode": "global", "evaluation_attacked_image_count": 1,
+        "perturbation_file": "perturbations/normal.pt", "artifact_sha256": digest,
+        "image_size": 8, "epsilon": 0.1,
+        "prompt_ensemble_sha256": "", "prompt_checkpoint_sha256": "",
+    }
+    _csv(bundle / "attack_manifest.csv", list(record), [record])
+    output = evaluate(EvaluationConfig(
+        attacks_root=str(tmp_path / "attacks"), output_root=str(tmp_path / "results"),
+        model="test_adapter", model_kwargs_by_target={"mvtec": {}},
+        mvtec_root=str(mvtec), targets=("mvtec",), scopes=("per_dataset",),
+        device="cpu", image_size=8, batch_size=2, gaussian_sigma=0,
+        pixel_threshold_modes=("fixed_0_5",), image_metrics_only=True,
+    ))
+    with (output / "summary.csv").open(newline="") as handle:
+        row = next(csv.DictReader(handle))
+
+    def value(name):
+        return float(row[name]) if row[name] != "" else float("nan")
+
+    # AUPRO is the only metric dropped; its columns stay, as NaN.
+    for name in ("clean_aupro", "adversarial_aupro", "delta_aupro"):
+        assert np.isnan(value(name)), name
+    for name in (
+        "clean_i_auroc", "adversarial_i_auroc", "clean_i_ap", "clean_i_f1_max",
+        "clean_p_auroc", "adversarial_p_auroc", "delta_p_auroc",
+        "clean_p_f1_max", "adversarial_p_f1_max", "delta_p_f1_max",
+        "target_region_pixel_flip_rate_macro",
+        "target_region_pixel_attack_success_rate_macro",
+    ):
+        assert np.isfinite(value(name)), name
+    assert value("clean_p_auroc") == 100.0
+    results_root = tmp_path / "results" / "zero_shot"
+    assert not (results_root / "test_adapter_samples_separated").exists()
+    assert not (results_root / "test_adapter_samples_separated.zip").exists()
+
+
 def test_max_sample_conditions_keeps_only_the_strongest_per_scope(tmp_path):
     from fpeval.engine import _SampleBudget
 

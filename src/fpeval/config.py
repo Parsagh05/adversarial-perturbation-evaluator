@@ -64,10 +64,16 @@ class EvaluationConfig:
     # that works only where it was fitted memorised its cohort. per_image is
     # skipped, having fitted the single image it attacks and held nothing out.
     evaluate_attack_train: bool = False
+    # Skip the two expensive exports: AUPRO (written as NaN) and the
+    # qualitative samples. Every image metric, pixel AUROC and F1-max, and the
+    # target-region and location-free Top-K flip/ASR metrics are still computed.
+    image_metrics_only: bool = False
     run_metadata: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         self.targets = tuple(self.targets)
+        if self.image_metrics_only:
+            self.save_qualitative_samples = False
         self.scopes = tuple(self.scopes)
         self.pixel_threshold_modes = tuple(self.pixel_threshold_modes)
         if self.qualitative_threshold_modes is None:

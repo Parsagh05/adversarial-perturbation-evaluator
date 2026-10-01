@@ -99,7 +99,10 @@ def aupro(masks: np.ndarray, maps: np.ndarray, *, fpr_limit: float = 0.3, thresh
     return 100 * float(trap(y, x) / fpr_limit)
 
 
-def pixel_performance(masks: np.ndarray, maps: np.ndarray, *, fpr_limit: float, thresholds: int) -> dict[str, float]:
+def pixel_performance(
+    masks: np.ndarray, maps: np.ndarray, *, fpr_limit: float, thresholds: int,
+    with_aupro: bool = True,
+) -> dict[str, float]:
     flat_masks = np.asarray(masks, dtype=np.uint8).reshape(-1)
     flat_maps = np.asarray(maps, dtype=np.float32).reshape(-1)
     # One sorted curve serves AUROC, F1-max, and the F1-optimal threshold.
@@ -107,7 +110,12 @@ def pixel_performance(masks: np.ndarray, maps: np.ndarray, *, fpr_limit: float, 
     return {
         "p_auroc": base["auroc"], "p_f1_max": base["f1_max"],
         "p_f1_threshold": f1_threshold,
-        "aupro": aupro(masks, maps, fpr_limit=fpr_limit, thresholds=thresholds),
+        # AUPRO labels connected components per image and is by far the most
+        # expensive metric; without it the entry is NaN, not absent.
+        "aupro": (
+            aupro(masks, maps, fpr_limit=fpr_limit, thresholds=thresholds)
+            if with_aupro else np.nan
+        ),
     }
 
 

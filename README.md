@@ -146,6 +146,11 @@ success counts are still written to `category_metrics.csv`: the macro ASR is
 computed from the success flags, and the pixel counts are what separates a
 cohort where nothing flipped from one where nothing was eligible.
 
+`image_metrics_only: true` skips the two expensive parts: AUPRO, whose columns
+are written as NaN, and the qualitative samples. Everything else above is still
+computed, including pixel AUROC and F1-max (both read off one sorted curve) and
+the target-region and location-free Top-K flip rates and ASR.
+
 Thresholds are calibrated only from the clean fixed evaluation cohort and then
 frozen. Because this uses labeled evaluation data, these are benchmark oracle
 operating points, not deployment calibration.

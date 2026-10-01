@@ -310,6 +310,7 @@ def _clean_only_rows(
             pixel = pixel_performance(
                 masks, maps,
                 fpr_limit=config.aupro_fpr_limit, thresholds=config.aupro_thresholds,
+                with_aupro=not config.image_metrics_only,
             )
             image_threshold = thresholds[category]["image_f1"]
             decisions = (scores >= image_threshold).astype(np.uint8)
@@ -510,6 +511,7 @@ def _evaluate_condition(
                 "pixel": pixel_performance(
                     masks, clean_maps, fpr_limit=config.aupro_fpr_limit,
                     thresholds=config.aupro_thresholds,
+                    with_aupro=not config.image_metrics_only,
                 ),
             }
             clean_metric_cache[category] = cached
@@ -518,6 +520,7 @@ def _evaluate_condition(
         adversarial_pixel_perf = pixel_performance(
             masks, adversarial_maps, fpr_limit=config.aupro_fpr_limit,
             thresholds=config.aupro_thresholds,
+            with_aupro=not config.image_metrics_only,
         )
         image_threshold = thresholds[category]["image_f1"]
         clean_image_pred = (clean_scores >= image_threshold).astype(np.uint8)
