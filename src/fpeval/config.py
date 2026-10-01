@@ -67,12 +67,12 @@ class EvaluationConfig:
     # Skip the two expensive exports: AUPRO (written as NaN) and the
     # qualitative samples. Every image metric, pixel AUROC and F1-max, and the
     # target-region and location-free Top-K flip/ASR metrics are still computed.
-    image_metrics_only: bool = False
+    selected_metrics_only: bool = False
     run_metadata: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         self.targets = tuple(self.targets)
-        if self.image_metrics_only:
+        if self.selected_metrics_only:
             self.save_qualitative_samples = False
         self.scopes = tuple(self.scopes)
         self.pixel_threshold_modes = tuple(self.pixel_threshold_modes)

@@ -151,7 +151,7 @@ def test_end_to_end_fixed_cohort(tmp_path):
     assert not (results_root / "test_adapter_samples.zip").exists()
 
 
-def test_image_metrics_only_skips_aupro_and_samples(tmp_path):
+def test_selected_metrics_only_skips_aupro_and_samples(tmp_path):
     mvtec = tmp_path / "mvtec"
     good = mvtec / "bottle" / "test" / "good" / "000.png"
     crack = mvtec / "bottle" / "test" / "crack" / "001.png"
@@ -183,7 +183,7 @@ def test_image_metrics_only_skips_aupro_and_samples(tmp_path):
         model="test_adapter", model_kwargs_by_target={"mvtec": {}},
         mvtec_root=str(mvtec), targets=("mvtec",), scopes=("per_dataset",),
         device="cpu", image_size=8, batch_size=2, gaussian_sigma=0,
-        pixel_threshold_modes=("fixed_0_5",), image_metrics_only=True,
+        pixel_threshold_modes=("fixed_0_5",), selected_metrics_only=True,
     ))
     with (output / "summary.csv").open(newline="") as handle:
         row = next(csv.DictReader(handle))
