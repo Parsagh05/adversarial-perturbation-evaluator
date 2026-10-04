@@ -119,7 +119,11 @@ All performance metrics use continuous scores and a `0-100` scale:
 
 - image AUROC, average precision, and F1-max;
 - pixel AUROC and F1-max;
-- AUPRO integrated through FPR 0.30.
+- AUPRO integrated through FPR 0.30, computed as FasterAUPRO
+  (<https://github.com/AlirezaSalehy/FasterAUPRO>) and therefore AnomalyCLIP
+  compute it: 200 evenly spaced thresholds, the points below FPR 0.30 rescaled
+  to [0, 1]. This reads a few tenths below the official MVTec AD evaluation
+  code, which uses every score as a threshold.
 
 For every metric, `delta = clean - adversarial`, so positive values mean
 degradation. The evaluator also reports clean/adversarial accuracy, FPR, FNR,

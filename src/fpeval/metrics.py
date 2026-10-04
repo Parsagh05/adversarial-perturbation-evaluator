@@ -56,47 +56,56 @@ def performance(labels: Sequence[int], scores: Sequence[float]) -> dict[str, flo
 
 
 def aupro(masks: np.ndarray, maps: np.ndarray, *, fpr_limit: float = 0.3, thresholds: int = 200) -> float:
+    """AUPRO as FasterAUPRO's ``cal_pro_score_opp`` computes it, on a 0-100 scale.
+
+    https://github.com/AlirezaSalehy/FasterAUPRO - the cflow-ad algorithm that
+    AnomalyCLIP ships, with the region labelling taken out of the threshold
+    loop, so it returns their values: ``thresholds`` evenly spaced steps from
+    the lowest to the highest score, the points below FPR ``fpr_limit`` kept,
+    their FPRs rescaled to [0, 1] and the PRO curve integrated over them.
+    Ported line by line on scipy: ``skimage.measure.label``'s default 2-D
+    connectivity is the 8-neighbourhood used here, and sklearn's ``auc`` of a
+    non-increasing x is the negated trapezoid. That code reads a few tenths
+    below the official MVTec AD evaluation, which uses every score as a
+    threshold and integrates exactly up to the limit.
+    """
     masks = np.asarray(masks, dtype=bool)
     maps = np.asarray(maps, dtype=np.float32)
-    negatives = ~masks
-    negative_count = int(negatives.sum())
-    # Sorting each region's scores once turns every threshold into a binary
-    # search, instead of re-thresholding the whole stack for each candidate.
-    region_scores: list[np.ndarray] = []
-    for image_index, mask in enumerate(masks):
+    # Each region's pixel coordinates, labelled once rather than per threshold.
+    coords_list = []
+    for mask in masks:
         components, count = connected_components(mask, structure=np.ones((3, 3)))
-        for component in range(1, count + 1):
-            region_scores.append(np.sort(maps[image_index][components == component]))
-    if not negative_count or not region_scores:
+        coords_list.append([np.nonzero(components == k) for k in range(1, count + 1)])
+    inverse_masks = ~masks
+    tn_pixel = int(inverse_masks.sum())  # pixels that truly have the label 0
+    min_th, max_th = maps.min(), maps.max()
+    # The reference has no answer for these and fails on them.
+    if not tn_pixel or not any(coords_list) or max_th == min_th:
         return np.nan
-    flat = maps.reshape(-1)
-    stride = max(1, int(np.ceil(flat.size / 1_000_000)))
-    sampled = flat[::stride]
-    # Compare in the map dtype: NumPy 1.x silently narrowed a float64 threshold
-    # to float32 here, so making it explicit is both faithful and version-stable.
-    candidates = np.unique(
-        np.quantile(sampled, np.linspace(1, 0, min(thresholds, len(sampled))))
-    )[::-1].astype(maps.dtype)
-    negative_scores = np.sort(maps[negatives])
-    above = negative_scores.size - np.searchsorted(negative_scores, candidates, side="left")
-    fprs = np.r_[0.0, above / negative_count]
-    # Stack per-threshold so each row of region rates is contiguous; this keeps
-    # the reduction order identical to averaging one threshold at a time.
-    region_rates = np.stack([
-        (scores.size - np.searchsorted(scores, candidates, side="left")) / scores.size
-        for scores in region_scores
-    ], axis=-1)
-    pros = np.r_[0.0, region_rates.mean(axis=-1)]
-    x_raw, y_raw = np.asarray(fprs), np.asarray(pros)
-    order = np.argsort(x_raw)
-    x_raw, y_raw = x_raw[order], y_raw[order]
-    x = np.unique(x_raw)
-    y = np.asarray([y_raw[x_raw == item].max() for item in x])
-    boundary = float(np.interp(fpr_limit, x, y))
-    keep = x < fpr_limit
-    x, y = np.r_[x[keep], fpr_limit], np.r_[y[keep], boundary]
+    delta = (max_th - min_th) / thresholds
+    binary_amaps = np.zeros_like(maps, dtype=bool)
+    pros, fprs = [], []
+    for th in np.arange(min_th, max_th, delta):
+        np.greater(maps, th, out=binary_amaps)
+        pro = [
+            binary_amap[coords].sum() / coords[0].size
+            for binary_amap, regions_coords in zip(binary_amaps, coords_list)
+            for coords in regions_coords
+        ]
+        fp_pixels = np.logical_and(inverse_masks, binary_amaps).sum()
+        fprs.append(fp_pixels / tn_pixel)
+        pros.append(np.mean(pro))
+    pros, fprs = np.array(pros), np.array(fprs)
+    idxes = fprs < fpr_limit
+    fprs, pros = fprs[idxes], pros[idxes]
+    if not fprs.size:
+        return np.nan
+    if np.ptp(fprs) == 0:
+        return 100 * float(np.mean(pros))
+    fprs = (fprs - fprs.min()) / (fprs.max() - fprs.min())
     trap = np.trapezoid if hasattr(np, "trapezoid") else np.trapz
-    return 100 * float(trap(y, x) / fpr_limit)
+    # The thresholds rise, so the FPRs fall: sklearn's auc negates for that.
+    return 100 * float(-trap(pros, fprs))
 
 
 def pixel_performance(
