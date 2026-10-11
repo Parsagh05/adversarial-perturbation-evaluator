@@ -193,14 +193,27 @@ MRAD, Tipsomaly, WinCLIP and accurate WinCLIP do not normalise at all. A new
 adapter that fits its normalisation on the attacked images would break this
 and need a per-image V2 file.
 
-A model folder that already holds V1 results (`summary.csv`) is handled by
-this setting, without `overwrite`:
+A model folder that already holds V1 results (`summary.csv`) is handled as
+follows when `overwrite` is false. The current settings are first compared with
+the stored `run_config_<model>.json` on those that change the numbers: model,
+targets, the condition filters, `max_conditions`, `clean_only`,
+`evaluate_attack_train`, `selected_metrics_only`, image size, Gaussian sigma,
+the AUPRO, pixel-threshold, pixel-success and Top-K settings, and the model
+kwargs. Paths in the kwargs count by their last two parts only, so the same
+checkpoint evaluated from another run folder is no change. Batch size, device,
+output paths, archives and qualitative samples never count.
 
-| `evaluate_bidirectional` | V2 files | What a new run does |
-|---|---|---|
-| false | - | stops with "Results already exist", as before |
-| true | missing, or not covering every stored pair | adds V2 only |
-| true | complete | nothing |
+| Settings vs stored | `evaluate_bidirectional` | V2 files | What a new run does |
+|---|---|---|---|
+| changed | any | any | re-evaluates everything from scratch, listing the changed settings in the log; the stored result is replaced |
+| same | false | - | stops with "Results already exist", as before |
+| same | true | missing, or not covering every stored pair | adds V2 only |
+| same | true | complete | nothing |
+
+So V1 and V2 always come from the same settings: switching AUPRO on for a
+model evaluated without it recomputes both rather than adding V2 with AUPRO
+beside a V1 without. Every full run (also with `overwrite: true`) first deletes
+V2 files left by an earlier run, which no longer belong to the new V1.
 
 Adding V2 to a stored result reruns inference on the held-out half only (the
 maps V2 needs were not saved) for exactly the conditions `summary.csv` holds,
