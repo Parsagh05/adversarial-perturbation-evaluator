@@ -4,8 +4,9 @@ from __future__ import annotations
 
 from dataclasses import asdict, replace
 import csv
+import json
 import math
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from collections import defaultdict
 from collections.abc import Iterable, Sequence
 from typing import Any
@@ -767,6 +768,67 @@ def _v2_covered_conditions(summary_v2_path: Path) -> set[str]:
     }
 
 
+# The settings that change the numbers. A stored result is reused (V2 added,
+# or left alone) only when all of them match; batch size, device, output
+# paths, archives and qualitative samples change speed or packaging, not results.
+_RESULT_SETTINGS = (
+    "model", "targets", "scopes", "prompt_modes", "setup_ids", "source_datasets",
+    "categories", "directions", "loss_modes", "loss_formulations", "max_conditions",
+    "clean_only", "evaluate_attack_train", "selected_metrics_only",
+    "image_size", "gaussian_sigma", "aupro_fpr_limit", "aupro_thresholds",
+    "pixel_threshold_modes", "pixel_success_min_flip_fraction",
+    "location_free_topk_fraction", "model_kwargs_by_target",
+)
+
+
+def _comparable(value: Any) -> Any:
+    """JSON-shaped value; a path keeps only its last two parts.
+
+    Model kwargs carry run-folder paths (repositories, weights), so the same
+    checkpoint evaluated from another run folder must not count as a change.
+    The last two parts still tell one checkpoint from another.
+    """
+    if isinstance(value, dict):
+        return {str(key): _comparable(item) for key, item in sorted(value.items())}
+    if isinstance(value, (list, tuple)):
+        return [_comparable(item) for item in value]
+    if isinstance(value, Path):
+        value = str(value)
+    if isinstance(value, str) and ("/" in value or "\\" in value):
+        return "/".join(PurePosixPath(value.replace("\\", "/")).parts[-2:])
+    return value
+
+
+def _changed_settings(record_path: Path, config: EvaluationConfig) -> list[str]:
+    """Result-relevant settings that differ from the stored run, as readable lines."""
+    if not record_path.is_file():
+        print(f"No stored run record at {record_path}; treating its settings as unchanged")
+        return []
+    stored = json.loads(record_path.read_text(encoding="utf-8"))
+    current = asdict(config)
+    changes = []
+    for name in _RESULT_SETTINGS:
+        # A setting an older evaluator did not record cannot be compared.
+        if name not in stored:
+            continue
+        old, new = _comparable(stored[name]), _comparable(current[name])
+        if old != new:
+            changes.append(f"{name}: {old!r} -> {new!r}")
+    return changes
+
+
+def _remove_v2_files(output: Path, structured_output: Path, model: str) -> None:
+    for path in (
+        output / "summary_v2.csv", output / "category_metrics_v2.csv",
+        output / f"run_config_v2_{model}.json",
+    ):
+        path.unlink(missing_ok=True)
+    if structured_output.is_dir():
+        for name in ("summary_v2.csv", "category_metrics_v2.csv"):
+            for path in structured_output.rglob(name):
+                path.unlink()
+
+
 def _check_v1_unchanged(summary_path: Path, recomputed: list[dict[str, Any]]) -> None:
     """Stop if the recomputed held-out V1 rows disagree with the stored ones.
 
@@ -988,14 +1050,28 @@ def evaluate(config: EvaluationConfig) -> Path:
     existing = output / "summary.csv"
     v2_only = False
     if existing.exists() and not config.overwrite:
-        if not config.evaluate_bidirectional or config.clean_only:
+        changed = _changed_settings(output / run_config_name(config.model), config)
+        if changed:
+            # Reusing any of it would put two settings in one result: redo all.
+            print("=" * 72)
+            print(f"Settings changed since the stored result in {output}:")
+            for line in changed:
+                print(f"  {line}")
+            print("Re-evaluating from scratch; the stored result will be replaced.")
+            print("=" * 72)
+        elif not config.evaluate_bidirectional or config.clean_only:
             raise FileExistsError(f"Results already exist: {existing}; set overwrite=true")
-        # V1 is there. Add V2 if it is missing or incomplete, otherwise stop.
-        needed = _pairable_conditions(existing)
-        if needed <= _v2_covered_conditions(output / "summary_v2.csv"):
-            print(f"V1 and V2 results already complete: {output}")
-            return output
-        v2_only = True
+        else:
+            # Same settings, V1 is there: add V2 if it is missing or incomplete.
+            needed = _pairable_conditions(existing)
+            if needed <= _v2_covered_conditions(output / "summary_v2.csv"):
+                print(f"V1 and V2 results already complete: {output}")
+                return output
+            v2_only = True
+    if not v2_only:
+        # A full run rewrites V1; V2 left from an earlier run would no longer
+        # belong to it, and a run without V2 would leave it behind.
+        _remove_v2_files(output, structured_output, config.model)
     output.mkdir(parents=True, exist_ok=True)
     attacks = select_attacks(config)
     if v2_only:

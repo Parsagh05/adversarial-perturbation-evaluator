@@ -254,14 +254,15 @@ def _bidirectional_fixture(tmp_path):
 
 
 def _evaluate_pair(tmp_path, mvtec, results, **overrides):
-    return evaluate(EvaluationConfig(
+    settings = dict(
         attacks_root=str(tmp_path / "attacks"), output_root=str(tmp_path / results),
         model="test_adapter", model_kwargs_by_target={"mvtec": {}},
         mvtec_root=str(mvtec), targets=("mvtec",), scopes=("per_dataset",),
         device="cpu", image_size=8, batch_size=2, gaussian_sigma=0,
         pixel_threshold_modes=("fixed_0_5",), save_qualitative_samples=False,
-        create_output_archives=False, **overrides,
-    ))
+        create_output_archives=False,
+    )
+    return evaluate(EvaluationConfig(**{**settings, **overrides}))
 
 
 def test_bidirectional_scores_both_directions_as_one_cohort(tmp_path):
@@ -369,6 +370,39 @@ def test_v2_only_refuses_a_stored_v1_it_cannot_reproduce(tmp_path):
     else:
         raise AssertionError("a V1 that no longer reproduces must stop the V2 run")
     assert not (output / "summary_v2.csv").exists()
+
+
+def test_changed_settings_rerun_from_scratch(tmp_path):
+    mvtec = _bidirectional_fixture(tmp_path)
+
+    def aupro(output):
+        with (output / "summary.csv").open(newline="") as handle:
+            return float(next(csv.DictReader(handle))["adversarial_aupro"] or "nan")
+
+    output = _evaluate_pair(tmp_path, mvtec, "results", selected_metrics_only=True)
+    assert np.isnan(aupro(output)) and (output / "summary_v2.csv").is_file()
+    # AUPRO switched on: the stored result cannot be reused, so V1 and V2 are
+    # both recomputed with it rather than V2 alone.
+    _evaluate_pair(tmp_path, mvtec, "results")
+    assert np.isfinite(aupro(output))
+    assert not (output / "run_config_v2_test_adapter.json").exists()
+    with (output / "summary_v2.csv").open(newline="") as handle:
+        assert np.isfinite(float(next(csv.DictReader(handle))["adversarial_aupro"]))
+    # A changed setting with V2 off still reruns, and drops the V2 files that
+    # belonged to the replaced result.
+    _evaluate_pair(
+        tmp_path, mvtec, "results", evaluate_bidirectional=False,
+        pixel_threshold_modes=("image_f1",),
+    )
+    assert not (output / "summary_v2.csv").exists()
+    assert not list((tmp_path / "results").rglob("summary_v2.csv"))
+    with (output / "summary.csv").open(newline="") as handle:
+        assert {row["pixel_threshold_mode"] for row in csv.DictReader(handle)} == {"image_f1"}
+    # Moving the run folder is not a change: only the last two path parts count.
+    from fpeval.engine import _comparable
+    assert _comparable({"checkpoint": "/a/run1/ckpt/epoch_15.pth"}) == _comparable(
+        {"checkpoint": "/b/run2/ckpt/epoch_15.pth"}
+    )
 
 
 def test_max_sample_conditions_keeps_only_the_strongest_per_scope(tmp_path):
