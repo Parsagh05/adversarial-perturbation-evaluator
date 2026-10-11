@@ -185,6 +185,14 @@ no per-image V2 file: each image's attacked output is the one its own V1
 condition already wrote to `per_image.csv` (identical unless an adapter
 normalises over the attacked cohort itself).
 
+That holds for every current zero-shot adapter. AA-CLIP, APRIL-GAN, Bayes-PFL
+and VCP-CLIP (and the few-shot DictAS) normalise, but only with ranges taken
+from the clean reference; Bayes-PFL's top-k mean is per image. AdaCLIP,
+AF-CLIP, AnomalyCLIP, AnoVL, COPS, CRANE, CRANE+, FAPrompt, FB-CLIP, FiLo,
+MRAD, Tipsomaly, WinCLIP and accurate WinCLIP do not normalise at all. A new
+adapter that fits its normalisation on the attacked images would break this
+and need a per-image V2 file.
+
 ## Scoring the images a perturbation was fitted on
 
 `evaluate_attack_train: true` scores each perturbation a second time, over the
