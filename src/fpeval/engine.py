@@ -442,6 +442,7 @@ def _evaluate_condition(
     config: EvaluationConfig,
     clean_metrics: dict[tuple[str, ...], dict[str, dict[str, float]]] | None = None,
     partition: str = "evaluation",
+    raw_out: dict[str, Prediction] | None = None,
 ) -> tuple[
     list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]],
     dict[str, np.ndarray], torch.Tensor, dict[str, int],
@@ -467,6 +468,9 @@ def _evaluate_condition(
     adversarial_only, linf = _predict_attacked(
         adapter, attacked_samples, delta, delta_index, config
     )
+    # The raw attacked predictions, kept by the caller to build V2.
+    if raw_out is not None:
+        raw_out.update(adversarial_only)
     raw_adversarial = {
         sample.protocol_id: adversarial_only.get(
             sample.protocol_id, raw_clean_cache[sample.protocol_id]
@@ -504,18 +508,9 @@ def _evaluate_condition(
             config.image_size, config.gaussian_sigma,
         )
         masks = np.stack([load_mask(sample, config.image_size) for sample in category_samples])
-        cached = clean_metric_cache.get(category)
-        if cached is None:
-            cached = {
-                "image": performance(labels, clean_scores),
-                "pixel": pixel_performance(
-                    masks, clean_maps, fpr_limit=config.aupro_fpr_limit,
-                    thresholds=config.aupro_thresholds,
-                    with_aupro=not config.selected_metrics_only,
-                ),
-            }
-            clean_metric_cache[category] = cached
-        clean_image_perf, clean_pixel_perf = cached["image"], cached["pixel"]
+        clean_image_perf, clean_pixel_perf = _clean_category_metrics(
+            clean_metric_cache, category, labels, clean_scores, clean_maps, masks, config
+        )
         adversarial_image_perf = performance(labels, adversarial_scores)
         adversarial_pixel_perf = pixel_performance(
             masks, adversarial_maps, fpr_limit=config.aupro_fpr_limit,
@@ -691,6 +686,181 @@ def _evaluate_condition(
     return summary_rows, category_rows, per_image_rows, predictions, delta, delta_index
 
 
+def _clean_category_metrics(
+    cache: dict[str, dict[str, Any]], category: str, labels: np.ndarray,
+    scores: np.ndarray, maps: np.ndarray, masks: np.ndarray, config: EvaluationConfig,
+) -> tuple[dict[str, float], dict[str, float]]:
+    """Clean image and pixel metrics of one category, computed once per cohort."""
+    cached = cache.get(category)
+    if cached is None:
+        cached = {
+            "image": performance(labels, scores),
+            "pixel": pixel_performance(
+                masks, maps, fpr_limit=config.aupro_fpr_limit,
+                thresholds=config.aupro_thresholds,
+                with_aupro=not config.selected_metrics_only,
+            ),
+        }
+        cache[category] = cached
+    return cached["image"], cached["pixel"]
+
+
+# The condition_id fields except the direction: an N->A and an A->N condition
+# that agree on all of them are the two halves of one V2 pair.
+_PAIR_FIELDS = (
+    "prompt_mode", "setup_id", "source_dataset", "target_dataset",
+    "scope", "category", "loss_formulation", "loss_mode",
+)
+# Condition columns that legitimately differ between the two directions.
+_DIRECTION_FIELDS = (
+    "direction", "source_label", "target_label",
+    "margin_topk_fraction", "optimization_steps",
+)
+_V2_METRICS = (
+    "clean_i_auroc", "clean_i_ap", "clean_i_f1_max",
+    "adversarial_i_auroc", "adversarial_i_ap", "adversarial_i_f1_max",
+    "delta_i_auroc", "delta_i_ap", "delta_i_f1_max",
+    "clean_p_auroc", "clean_p_f1_max", "clean_aupro",
+    "adversarial_p_auroc", "adversarial_p_f1_max", "adversarial_aupro",
+    "delta_p_auroc", "delta_p_f1_max", "delta_aupro",
+    "clean_accuracy", "clean_fpr", "clean_fnr",
+    "adversarial_accuracy", "adversarial_fpr", "adversarial_fnr",
+    "attack_flip_rate", "untargeted_attack_success_rate",
+    "n2a_targeted_attack_success_rate", "a2n_targeted_attack_success_rate",
+)
+
+
+def _pair_key(attack: Attack) -> tuple[str, ...]:
+    return tuple(str(attack.record.get(name) or "all") for name in _PAIR_FIELDS)
+
+
+def _evaluate_bidirectional(
+    n2a: Attack,
+    a2n: Attack,
+    raw_attacked: dict[str, Prediction],
+    samples_by_id: dict[str, Sample],
+    raw_clean_cache: dict[str, Prediction],
+    adapter: Any,
+    thresholds: dict[str, dict[str, float]],
+    config: EvaluationConfig,
+    clean_metrics: dict[tuple[str, ...], dict[str, dict[str, float]]],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """V2: normals carry the N->A delta and defects the A->N delta, scored together.
+
+    Both halves were already predicted by the two V1 conditions. Their raw
+    outputs are merged and postprocessed once against the clean reference, as
+    any attacked cohort is, so no model is run again. The per-image outputs are
+    those of the two V1 conditions (identical unless an adapter normalises over
+    the attacked cohort itself), so V2 writes cohort-level rows only.
+    """
+    if n2a.evaluation_ids != a2n.evaluation_ids:
+        raise ValueError(f"V2 pair has different cohorts: {n2a.condition_id}")
+    n2a_ids, a2n_ids = set(n2a.attacked_ids), set(a2n.attacked_ids)
+    if n2a_ids & a2n_ids:
+        raise ValueError(f"V2 pair attacks the same image twice: {n2a.condition_id}")
+    cohort = [samples_by_id[sample_id] for sample_id in n2a.evaluation_ids]
+    clean_metric_cache = clean_metrics.setdefault(
+        tuple(sample.protocol_id for sample in cohort), {}
+    )
+    clean_cache = _postprocess_predictions(adapter, cohort, raw_clean_cache)
+    adversarial = _postprocess_predictions(
+        adapter,
+        cohort,
+        {
+            sample.protocol_id: raw_attacked.get(
+                sample.protocol_id, raw_clean_cache[sample.protocol_id]
+            )
+            for sample in cohort
+        },
+        reference_samples=cohort,
+        reference_predictions=raw_clean_cache,
+    )
+    base = {
+        name: value for name, value in _condition_fields(n2a).items()
+        if name not in _DIRECTION_FIELDS
+    }
+    base.update({
+        "evaluation_variant": "V2", "direction": "bidirectional",
+        "partition": "evaluation",
+        "pair_id": "__".join(_pair_key(n2a)) + "__bidirectional",
+        "n2a_condition_id": n2a.condition_id, "a2n_condition_id": a2n.condition_id,
+    })
+    for prefix, attack in (("n2a", n2a), ("a2n", a2n)):
+        for name in ("margin_topk_fraction", "optimization_steps"):
+            base[f"{prefix}_{name}"] = attack.record.get(name, "")
+
+    category_rows: list[dict[str, Any]] = []
+    for category in sorted({sample.category for sample in cohort}):
+        category_samples = [sample for sample in cohort if sample.category == category]
+        ids = [sample.protocol_id for sample in category_samples]
+        labels = np.asarray([sample.label for sample in category_samples], dtype=np.uint8)
+        in_n2a = np.asarray([sample_id in n2a_ids for sample_id in ids], dtype=bool)
+        in_a2n = np.asarray([sample_id in a2n_ids for sample_id in ids], dtype=bool)
+        attacked = in_n2a | in_a2n
+        clean_scores = np.asarray([clean_cache[i][0] for i in ids], dtype=np.float32)
+        adversarial_scores = np.asarray([adversarial[i][0] for i in ids], dtype=np.float32)
+        clean_maps = _resize_maps(
+            [clean_cache[i][1] for i in ids], config.image_size, config.gaussian_sigma
+        )
+        adversarial_maps = _resize_maps(
+            [adversarial[i][1] for i in ids], config.image_size, config.gaussian_sigma
+        )
+        masks = np.stack([load_mask(sample, config.image_size) for sample in category_samples])
+        clean_image, clean_pixel = _clean_category_metrics(
+            clean_metric_cache, category, labels, clean_scores, clean_maps, masks, config
+        )
+        adversarial_image = performance(labels, adversarial_scores)
+        adversarial_pixel = pixel_performance(
+            masks, adversarial_maps, fpr_limit=config.aupro_fpr_limit,
+            thresholds=config.aupro_thresholds,
+            with_aupro=not config.selected_metrics_only,
+        )
+        image_threshold = thresholds[category]["image_f1"]
+        clean_pred = (clean_scores >= image_threshold).astype(np.uint8)
+        adversarial_pred = (adversarial_scores >= image_threshold).astype(np.uint8)
+        # Untargeted success: correct when clean, wrong now. In a binary task
+        # this pools the two targeted successes below.
+        correct = attacked & (clean_pred == labels)
+        now_wrong = correct & (adversarial_pred != labels)
+        n2a_success = targeted_images(clean_pred, adversarial_pred, in_n2a, source=0, target=1)
+        a2n_success = targeted_images(clean_pred, adversarial_pred, in_a2n, source=1, target=0)
+        category_rows.append({
+            **base, "category": category, "image_threshold": image_threshold,
+            "sample_count": len(ids), "normal_count": int((labels == 0).sum()),
+            "defect_count": int((labels == 1).sum()), "attacked_count": int(attacked.sum()),
+            **{f"clean_i_{name}": clean_image[name] for name in ("auroc", "ap", "f1_max")},
+            **{f"adversarial_i_{name}": adversarial_image[name] for name in ("auroc", "ap", "f1_max")},
+            **{f"delta_i_{name}": clean_image[name] - adversarial_image[name]
+               for name in ("auroc", "ap", "f1_max")},
+            **{f"clean_{name}": clean_pixel[name] for name in ("p_auroc", "p_f1_max", "aupro")},
+            **{f"adversarial_{name}": adversarial_pixel[name] for name in ("p_auroc", "p_f1_max", "aupro")},
+            **{f"delta_{name}": clean_pixel[name] - adversarial_pixel[name]
+               for name in ("p_auroc", "p_f1_max", "aupro")},
+            **{f"clean_{name}": value for name, value in classification(labels, clean_pred).items()},
+            **{f"adversarial_{name}": value
+               for name, value in classification(labels, adversarial_pred).items()},
+            "attack_flip_rate": (
+                100 * float((clean_pred[attacked] != adversarial_pred[attacked]).mean())
+                if attacked.any() else np.nan
+            ),
+            "untargeted_attack_success_rate": (
+                100 * float(now_wrong.sum()) / int(correct.sum()) if correct.any() else np.nan
+            ),
+            "n2a_targeted_attack_success_rate": n2a_success["targeted_attack_success_rate"],
+            "a2n_targeted_attack_success_rate": a2n_success["targeted_attack_success_rate"],
+        })
+
+    summary = {
+        **base,
+        "category": category_rows[0]["category"] if len(category_rows) == 1 else "__macro__",
+        "category_count": len(category_rows),
+        **{name: sum(int(row[name]) for row in category_rows)
+           for name in ("sample_count", "normal_count", "defect_count", "attacked_count")},
+        **{name: _mean(category_rows, name) for name in _V2_METRICS},
+    }
+    return [summary], category_rows
+
+
 def run_config_name(model: str) -> str:
     """The model-specific record, named for its model so copies never collide."""
     return f"run_config_{model}.json"
@@ -782,6 +952,9 @@ def _run_conditions(
     all_summary: list[dict[str, Any]] = []
     all_categories: list[dict[str, Any]] = []
     all_images: list[dict[str, Any]] = []
+    v2_summary: list[dict[str, Any]] = []
+    v2_categories: list[dict[str, Any]] = []
+    v2_unpaired: list[str] = []
     threshold_payload: dict[str, Any] = {"schema_version": 1, "model": config.model, "targets": {}}
     resolved_model_settings: dict[str, dict[str, object]] = {}
 
@@ -848,14 +1021,40 @@ def _run_conditions(
                 all_categories.extend(categories)
                 all_images.extend(images)
                 continue
+            if config.evaluate_bidirectional:
+                # The two directions of a V2 pair run back to back, so only one
+                # condition's raw attacked predictions are ever held.
+                target_attacks = sorted(
+                    target_attacks, key=lambda item: (_pair_key(item), item.condition_id)
+                )
+            pending: dict[tuple[str, ...], tuple[Attack, dict[str, Prediction]]] = {}
             for attack in target_attacks:
+                raw_attacked: dict[str, Prediction] | None = (
+                    {} if config.evaluate_bidirectional else None
+                )
                 summary, categories, images, predictions, delta, delta_index = _evaluate_condition(
                     attack, indexed, raw_clean, adapter, thresholds, config,
-                    clean_metrics=clean_metrics,
+                    clean_metrics=clean_metrics, raw_out=raw_attacked,
                 )
                 all_summary.extend(summary)
                 all_categories.extend(categories)
                 all_images.extend(images)
+                if raw_attacked is not None:
+                    partner = pending.pop(_pair_key(attack), None)
+                    if partner is None:
+                        pending[_pair_key(attack)] = (attack, raw_attacked)
+                    else:
+                        by_direction = {
+                            item.record["direction"]: item for item in (partner[0], attack)
+                        }
+                        pair_summary, pair_categories = _evaluate_bidirectional(
+                            by_direction["normal_to_abnormal"],
+                            by_direction["abnormal_to_normal"],
+                            {**partner[1], **raw_attacked},
+                            indexed, raw_clean, adapter, thresholds, config, clean_metrics,
+                        )
+                        v2_summary.extend(pair_summary)
+                        v2_categories.extend(pair_categories)
                 # A second pass over the images this delta was fitted on. Its
                 # rows are marked partition=attack_train and kept beside the
                 # held-out ones rather than pooled with them; the gap between
@@ -912,6 +1111,8 @@ def _run_conditions(
                         _condition_sample_rank(summary),
                         condition_sample_dirs,
                     )
+            # A condition whose other direction was not selected has no V2.
+            v2_unpaired.extend(attack.condition_id for attack, _ in pending.values())
         finally:
             adapter.close()
 
@@ -923,6 +1124,15 @@ def _run_conditions(
     _write_csv(output / "summary.csv", all_summary)
     _write_csv(output / "category_metrics.csv", all_categories)
     _write_csv(output / "per_image.csv", all_images)
+    # V2 sits beside V1, never inside it, so a script averaging summary.csv
+    # cannot pool the two by accident.
+    if v2_summary:
+        _write_csv(output / "summary_v2.csv", v2_summary)
+        _write_csv(output / "category_metrics_v2.csv", v2_categories)
+    if config.evaluate_bidirectional:
+        if v2_unpaired:
+            print(f"V2 skipped for {len(v2_unpaired)} condition(s) without their other direction")
+        record.update(v2_pair_count=len(v2_summary), v2_unpaired_conditions=v2_unpaired)
     threshold_payload["resolved_model_settings_by_target"] = resolved_model_settings
     write_json(output / "thresholds.json", threshold_payload, default=_json_value)
     # Checkpoints are named and hashed, never copied: the hash is what pins the
@@ -941,6 +1151,8 @@ def _run_conditions(
             summary_rows=all_summary,
             category_rows=all_categories,
             image_rows=all_images,
+            v2_summary_rows=v2_summary,
+            v2_category_rows=v2_categories,
             manifest_records=manifest_snapshot,
             thresholds=threshold_payload,
             config=config,

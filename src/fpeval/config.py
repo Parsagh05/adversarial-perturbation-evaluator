@@ -68,6 +68,11 @@ class EvaluationConfig:
     # qualitative samples. Every image metric, pixel AUROC and F1-max, and the
     # target-region and location-free Top-K flip/ASR metrics are still computed.
     selected_metrics_only: bool = False
+    # Also score V2: every image carries the perturbation of its harmful
+    # direction (normals the N->A delta, defects the A->N delta), scored as one
+    # cohort. No extra inference: the two V1 conditions of a pair already
+    # predicted both halves. Written to summary_v2.csv / category_metrics_v2.csv.
+    evaluate_bidirectional: bool = True
     run_metadata: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:

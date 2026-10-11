@@ -1,5 +1,6 @@
 import csv
 import hashlib
+import json
 from pathlib import Path
 
 import numpy as np
@@ -206,6 +207,116 @@ def test_selected_metrics_only_skips_aupro_and_samples(tmp_path):
     results_root = tmp_path / "results" / "zero_shot"
     assert not (results_root / "test_adapter_samples_separated").exists()
     assert not (results_root / "test_adapter_samples_separated.zip").exists()
+
+
+def _bidirectional_fixture(tmp_path):
+    # The synthetic adapter scores an image by its mean: normals 0.0 and 0.2,
+    # defects 0.8 and 1.0. N->A adds 0.7 to the normals (0.7, 0.9) and A->N
+    # takes 0.7 off the defects (0.1, 0.3). Each direction alone inverts one of
+    # the four normal-defect pairs; both together invert all four.
+    mvtec = tmp_path / "mvtec"
+    images = {
+        "good/000": 0, "good/001": 51, "crack/002": 204, "crack/003": 255,
+    }
+    for name, value in images.items():
+        kind, stem = name.split("/")
+        path = mvtec / "bottle" / "test" / kind / f"{stem}.png"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        Image.fromarray(np.full((8, 8, 3), value, dtype=np.uint8)).save(path)
+        if kind == "crack":
+            mask = mvtec / "bottle" / "ground_truth" / "crack" / f"{stem}_mask.png"
+            mask.parent.mkdir(parents=True, exist_ok=True)
+            Image.fromarray(np.full((8, 8), 255, dtype=np.uint8)).save(mask)
+    bundle = tmp_path / "attacks" / "setups" / "frozen_prompt" / "steps500_eps2" / "canonical_clip_per_dataset"
+    rows = []
+    for direction, source, target, shift in (
+        ("normal_to_abnormal", 0, 1, 0.7), ("abnormal_to_normal", 1, 0, -0.7),
+    ):
+        perturbation = bundle / "perturbations" / f"{direction}.pt"
+        perturbation.parent.mkdir(parents=True, exist_ok=True)
+        torch.save({"delta": torch.full((3, 8, 8), shift)}, perturbation)
+        rows.append({
+            "scope": "per_dataset", "source_dataset": "mvtec", "target_dataset": "mvtec",
+            "direction": direction, "source_label": source, "target_label": target,
+            "loss_mode": "global", "evaluation_attacked_image_count": 2,
+            "perturbation_file": f"perturbations/{direction}.pt",
+            "artifact_sha256": hashlib.sha256(perturbation.read_bytes()).hexdigest(),
+            "image_size": 8, "epsilon": 0.7,
+            "prompt_ensemble_sha256": "", "prompt_checkpoint_sha256": "",
+        })
+    _csv(bundle / "evaluation_test_indices.csv", ["protocol_id", "dataset", "category", "label", "partition"], [
+        {"protocol_id": f"test/bottle/{name}", "dataset": "mvtec", "category": "bottle",
+         "label": int(name.startswith("crack")), "partition": "evaluation"}
+        for name in images
+    ])
+    _csv(bundle / "attack_manifest.csv", list(rows[0]), rows)
+    return mvtec
+
+
+def _evaluate_pair(tmp_path, mvtec, results, **overrides):
+    return evaluate(EvaluationConfig(
+        attacks_root=str(tmp_path / "attacks"), output_root=str(tmp_path / results),
+        model="test_adapter", model_kwargs_by_target={"mvtec": {}},
+        mvtec_root=str(mvtec), targets=("mvtec",), scopes=("per_dataset",),
+        device="cpu", image_size=8, batch_size=2, gaussian_sigma=0,
+        pixel_threshold_modes=("fixed_0_5",), save_qualitative_samples=False,
+        create_output_archives=False, **overrides,
+    ))
+
+
+def test_bidirectional_scores_both_directions_as_one_cohort(tmp_path):
+    mvtec = _bidirectional_fixture(tmp_path)
+    output = _evaluate_pair(tmp_path, mvtec, "results")
+    with (output / "summary.csv").open(newline="") as handle:
+        v1 = {row["direction"]: row for row in csv.DictReader(handle)}
+    # Each direction alone: one pair of four inverted.
+    assert float(v1["normal_to_abnormal"]["adversarial_i_auroc"]) == 75.0
+    assert float(v1["abnormal_to_normal"]["adversarial_i_auroc"]) == 75.0
+    with (output / "summary_v2.csv").open(newline="") as handle:
+        (row,) = list(csv.DictReader(handle))
+    assert row["evaluation_variant"] == "V2"
+    assert row["direction"] == "bidirectional"
+    assert "__all__normal_to_abnormal__" in row["n2a_condition_id"]
+    assert "__all__abnormal_to_normal__" in row["a2n_condition_id"]
+    assert (row["sample_count"], row["normal_count"], row["defect_count"]) == ("4", "2", "2")
+    assert row["attacked_count"] == "4"
+    # Together: every normal now outranks every defect.
+    assert float(row["clean_i_auroc"]) == 100.0
+    assert float(row["adversarial_i_auroc"]) == 0.0
+    # The clean-F1 threshold is 0.8: normal 0.9 crosses it, normal 0.7 does
+    # not, and both defects fall below it.
+    assert float(row["n2a_targeted_attack_success_rate"]) == 50.0
+    assert float(row["a2n_targeted_attack_success_rate"]) == 100.0
+    assert float(row["untargeted_attack_success_rate"]) == 75.0
+    assert np.isfinite(float(row["adversarial_aupro"]))
+    assert (output / "category_metrics_v2.csv").is_file()
+    separated = (
+        tmp_path / "results" / "zero_shot" / "test_adapter_separated" / "setups"
+        / "frozen_prompt" / "steps500_eps2" / "datasets" / "mvtec_to_mvtec"
+        / "per_dataset" / "numerical"
+    )
+    assert (separated / "summary_v2.csv").is_file()
+    assert (separated / "category_metrics_v2.csv").is_file()
+
+
+def test_bidirectional_off_or_unpaired_writes_no_v2(tmp_path):
+    mvtec = _bidirectional_fixture(tmp_path)
+    off = _evaluate_pair(tmp_path, mvtec, "off", evaluate_bidirectional=False)
+    assert not (off / "summary_v2.csv").exists()
+    # One direction selected: its partner is missing, so there is no pair.
+    single = _evaluate_pair(tmp_path, mvtec, "single", directions=("normal_to_abnormal",))
+    assert not (single / "summary_v2.csv").exists()
+    record = json.loads((single / "run_config_test_adapter.json").read_text())
+    assert record["v2_pair_count"] == 0
+    assert len(record["v2_unpaired_conditions"]) == 1
+    # V2 adds files; it changes nothing in the V1 ones.
+    paired = _evaluate_pair(tmp_path, mvtec, "paired")
+    for name in ("summary.csv", "category_metrics.csv", "per_image.csv"):
+        with (off / name).open(newline="") as handle:
+            without = sorted(csv.DictReader(handle), key=lambda row: row.get("condition_id", ""))
+        with (paired / name).open(newline="") as handle:
+            with_v2 = sorted(csv.DictReader(handle), key=lambda row: row.get("condition_id", ""))
+        assert without == with_v2, name
 
 
 def test_max_sample_conditions_keeps_only_the_strongest_per_scope(tmp_path):

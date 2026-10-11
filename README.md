@@ -159,6 +159,32 @@ Thresholds are calibrated only from the clean fixed evaluation cohort and then
 frozen. Because this uses labeled evaluation data, these are benchmark oracle
 operating points, not deployment calibration.
 
+## V2: both directions at once
+
+Each condition above (V1) attacks one class: N->A perturbs the normal images,
+A->N the defective ones. `evaluate_bidirectional: true` (the default) also
+scores V2, where every image carries the perturbation of its harmful direction
+- normals the N->A delta, defects the A->N delta - as one cohort. This is the
+worst case the adversarial-robustness literature reports; for a binary detector
+it equals an untargeted attack.
+
+V2 runs no extra inference. The two directions of a pair (same setup, scope,
+prompt mode, datasets, category, loss) are evaluated back to back, their raw
+attacked predictions are merged, postprocessed once against the clean
+reference, and scored. A condition whose other direction was not selected gets
+no V2; `run_config_<model>.json` lists it under `v2_unpaired_conditions`.
+
+The rows go to `summary_v2.csv` (one per pair) and `category_metrics_v2.csv`,
+beside the V1 files in the model folder and in each separated slice, so nothing
+that reads `summary.csv` can pool V1 and V2 by accident. They carry the image
+and pixel ranking metrics (AUROC, AP, F1-max, pixel AUROC, F1-max, AUPRO),
+accuracy / FPR / FNR at the frozen threshold, the flip rate, the untargeted ASR
+(correct when clean, wrong now) and each direction's targeted ASR, plus
+`n2a_condition_id` / `a2n_condition_id` naming the two V1 conditions. There is
+no per-image V2 file: each image's attacked output is the one its own V1
+condition already wrote to `per_image.csv` (identical unless an adapter
+normalises over the attacked cohort itself).
+
 ## Scoring the images a perturbation was fitted on
 
 `evaluate_attack_train: true` scores each perturbation a second time, over the
@@ -982,6 +1008,8 @@ is few-shot - so it follows the adapter and needs no configuration.
   summary.csv
   category_metrics.csv
   per_image.csv
+  summary_v2.csv               # V2, both directions at once (one row per pair)
+  category_metrics_v2.csv
   thresholds.json
   run_config_<model>.json      # what only this model knows
   manifest_snapshot.json

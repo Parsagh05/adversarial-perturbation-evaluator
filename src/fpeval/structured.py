@@ -120,21 +120,30 @@ def write_separated_numerical(
     thresholds: dict[str, Any],
     config: Any,
     run_config: dict[str, Any] | None = None,
+    v2_summary_rows: Iterable[dict[str, Any]] = (),
+    v2_category_rows: Iterable[dict[str, Any]] = (),
 ) -> None:
     """Write the per-condition tree.
 
     `run_config` is the finished record from the consolidated run, so each slice
     carries the same provenance rather than a bare `asdict(config)`. It stays
     optional: a caller that passes nothing still gets the former contents.
+    V2 rows share the slice of the two directions they combine and land beside
+    the V1 files as summary_v2.csv / category_metrics_v2.csv.
     """
     grouped: dict[tuple[str, ...], dict[str, list[dict[str, Any]]]] = defaultdict(
-        lambda: {"summary": [], "category": [], "image": [], "manifest": []}
+        lambda: {
+            "summary": [], "category": [], "image": [], "manifest": [],
+            "summary_v2": [], "category_v2": [],
+        }
     )
     for name, rows in (
         ("summary", summary_rows),
         ("category", category_rows),
         ("image", image_rows),
         ("manifest", list(manifest_records)),
+        ("summary_v2", list(v2_summary_rows)),
+        ("category_v2", list(v2_category_rows)),
     ):
         for row in rows:
             grouped[_key(row)][name].append(row)
@@ -149,6 +158,9 @@ def write_separated_numerical(
         _write_csv(numerical / "summary.csv", values["summary"])
         _write_csv(numerical / "category_metrics.csv", values["category"])
         _write_csv(numerical / "per_image.csv", values["image"])
+        if values["summary_v2"]:
+            _write_csv(numerical / "summary_v2.csv", values["summary_v2"])
+            _write_csv(numerical / "category_metrics_v2.csv", values["category_v2"])
         (numerical / "manifest_snapshot.json").write_text(
             json.dumps(values["manifest"], indent=2, default=_json_value),
             encoding="utf-8",
