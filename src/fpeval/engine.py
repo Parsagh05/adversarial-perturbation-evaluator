@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict
+from dataclasses import asdict, replace
 import csv
 import math
 from pathlib import Path
@@ -45,6 +45,7 @@ from .structured import (
     separated_root,
     slice_root,
     write_separated_numerical,
+    write_separated_v2,
 )
 
 
@@ -734,6 +735,73 @@ def _pair_key(attack: Attack) -> tuple[str, ...]:
     return tuple(str(attack.record.get(name) or "all") for name in _PAIR_FIELDS)
 
 
+_DIRECTION_TOKENS = ("__normal_to_abnormal__", "__abnormal_to_normal__")
+
+
+def _read_rows(path: Path) -> list[dict[str, str]]:
+    if not path.is_file():
+        return []
+    with path.open(newline="", encoding="utf-8") as handle:
+        return list(csv.DictReader(handle))
+
+
+def _pairable_conditions(summary_path: Path) -> set[str]:
+    """Held-out V1 condition IDs in a stored summary whose other direction is there too."""
+    stored = {
+        row["condition_id"] for row in _read_rows(summary_path)
+        if row.get("partition", "evaluation") in ("", "evaluation")
+    }
+    pairable = set()
+    for condition_id in stored:
+        for token, other in (_DIRECTION_TOKENS, _DIRECTION_TOKENS[::-1]):
+            if token in condition_id and condition_id.replace(token, other) in stored:
+                pairable.add(condition_id)
+    return pairable
+
+
+def _v2_covered_conditions(summary_v2_path: Path) -> set[str]:
+    """V1 condition IDs a stored summary_v2.csv already combines."""
+    return {
+        row[name] for row in _read_rows(summary_v2_path)
+        for name in ("n2a_condition_id", "a2n_condition_id")
+    }
+
+
+def _check_v1_unchanged(summary_path: Path, recomputed: list[dict[str, Any]]) -> None:
+    """Stop if the recomputed held-out V1 rows disagree with the stored ones.
+
+    Numbers are compared only where both sides are finite, so a column the
+    stored run left NaN (AUPRO under selected_metrics_only) is no conflict. The
+    tolerance absorbs GPU float noise, not a different model or perturbation.
+    """
+    stored = {
+        (row["condition_id"], row["pixel_threshold_mode"]): row
+        for row in _read_rows(summary_path)
+        if row.get("partition", "evaluation") in ("", "evaluation")
+    }
+    for row in recomputed:
+        reference = stored.get((row["condition_id"], row["pixel_threshold_mode"]))
+        if reference is None:
+            continue
+        for name, value in row.items():
+            if name not in reference or not isinstance(value, (int, float)):
+                continue
+            try:
+                old = float(reference[name])
+            except ValueError:
+                continue
+            new = float(value)
+            if math.isfinite(old) and math.isfinite(new) and not math.isclose(
+                old, new, rel_tol=1e-3, abs_tol=0.05
+            ):
+                raise ValueError(
+                    f"Recomputed V1 differs from the stored result for "
+                    f"{row['condition_id']} ({name}: stored {old}, now {new}); "
+                    "the model, adapter or perturbations changed since. "
+                    "Set overwrite=true to re-evaluate both."
+                )
+
+
 def _evaluate_bidirectional(
     n2a: Attack,
     a2n: Attack,
@@ -918,21 +986,48 @@ def evaluate(config: EvaluationConfig) -> Path:
     structured_output = paths["separated"]
     structured_samples_output = paths["samples"]
     existing = output / "summary.csv"
+    v2_only = False
     if existing.exists() and not config.overwrite:
-        raise FileExistsError(f"Results already exist: {existing}; set overwrite=true")
+        if not config.evaluate_bidirectional or config.clean_only:
+            raise FileExistsError(f"Results already exist: {existing}; set overwrite=true")
+        # V1 is there. Add V2 if it is missing or incomplete, otherwise stop.
+        needed = _pairable_conditions(existing)
+        if needed <= _v2_covered_conditions(output / "summary_v2.csv"):
+            print(f"V1 and V2 results already complete: {output}")
+            return output
+        v2_only = True
     output.mkdir(parents=True, exist_ok=True)
     attacks = select_attacks(config)
+    if v2_only:
+        # Exactly the conditions the stored V1 holds, whatever else is selected.
+        absent = needed - {attack.condition_id for attack in attacks}
+        if absent:
+            raise ValueError(
+                f"{len(absent)} stored V1 condition(s) are not selected or have no "
+                f"bundle, e.g. {sorted(absent)[0]}; widen the filters or set overwrite=true"
+            )
+        attacks = [attack for attack in attacks if attack.condition_id in needed]
+        # Only the held-out half feeds V2; the stored run keeps its fitted-half
+        # rows, qualitative samples and predictions untouched.
+        config = replace(
+            config, evaluate_attack_train=False,
+            save_qualitative_samples=False, save_predictions=False,
+        )
 
     # Written before any inference, so a run that dies still says what it was
     # asked to do and against which bundles.
-    record = RunRecord(output / run_config_name(config.model), asdict(config))
-    record.update(attacks=provenance_attacks(attacks))
+    record_name = (
+        f"run_config_v2_{config.model}.json" if v2_only else run_config_name(config.model)
+    )
+    record = RunRecord(output / record_name, asdict(config))
+    record.update(attacks=provenance_attacks(attacks), v2_only=v2_only)
     manifest_snapshot = [attack.record for attack in attacks]
-    write_json(output / "manifest_snapshot.json", manifest_snapshot, default=_json_value)
+    if not v2_only:
+        write_json(output / "manifest_snapshot.json", manifest_snapshot, default=_json_value)
     try:
         return _run_conditions(
             config, output, structured_output, structured_samples_output,
-            attacks, manifest_snapshot, record,
+            attacks, manifest_snapshot, record, v2_only=v2_only,
         )
     except BaseException as error:  # noqa: BLE001 - recorded, then re-raised
         record.finish("failed", f"{type(error).__name__}: {error}")
@@ -947,8 +1042,14 @@ def _run_conditions(
     attacks: list[Attack],
     manifest_snapshot: list[dict[str, Any]],
     record: RunRecord,
+    v2_only: bool = False,
 ) -> Path:
-    """Score every selected condition. Split out so the caller can record a crash."""
+    """Score every selected condition. Split out so the caller can record a crash.
+
+    ``v2_only`` adds V2 to a stored V1 result: the V1 rows are recomputed only
+    to build V2 and to confirm they still match what is stored, and only the V2
+    files are written.
+    """
     all_summary: list[dict[str, Any]] = []
     all_categories: list[dict[str, Any]] = []
     all_images: list[dict[str, Any]] = []
@@ -1121,9 +1222,14 @@ def _run_conditions(
     kept = sample_budget.summary()
     if kept:
         print("Qualitative samples kept per scope:", kept)
-    _write_csv(output / "summary.csv", all_summary)
-    _write_csv(output / "category_metrics.csv", all_categories)
-    _write_csv(output / "per_image.csv", all_images)
+    if v2_only:
+        # V2 is built from fresh inference while V1 is from the stored run; a
+        # changed model, adapter or perturbation would make the two disagree.
+        _check_v1_unchanged(output / "summary.csv", all_summary)
+    else:
+        _write_csv(output / "summary.csv", all_summary)
+        _write_csv(output / "category_metrics.csv", all_categories)
+        _write_csv(output / "per_image.csv", all_images)
     # V2 sits beside V1, never inside it, so a script averaging summary.csv
     # cannot pool the two by accident.
     if v2_summary:
@@ -1133,6 +1239,15 @@ def _run_conditions(
         if v2_unpaired:
             print(f"V2 skipped for {len(v2_unpaired)} condition(s) without their other direction")
         record.update(v2_pair_count=len(v2_summary), v2_unpaired_conditions=v2_unpaired)
+    if v2_only:
+        record.finish("completed")
+        if config.write_separated_results and v2_summary:
+            write_separated_v2(structured_output, v2_summary, v2_categories)
+        if config.create_output_archives:
+            archive_directory(output, exclude_top_level=("extracted_attacks",))
+            if config.write_separated_results and structured_output.is_dir():
+                archive_directory(structured_output)
+        return output
     threshold_payload["resolved_model_settings_by_target"] = resolved_model_settings
     write_json(output / "thresholds.json", threshold_payload, default=_json_value)
     # Checkpoints are named and hashed, never copied: the hash is what pins the

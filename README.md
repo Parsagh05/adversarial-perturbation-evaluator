@@ -193,6 +193,25 @@ MRAD, Tipsomaly, WinCLIP and accurate WinCLIP do not normalise at all. A new
 adapter that fits its normalisation on the attacked images would break this
 and need a per-image V2 file.
 
+A model folder that already holds V1 results (`summary.csv`) is handled by
+this setting, without `overwrite`:
+
+| `evaluate_bidirectional` | V2 files | What a new run does |
+|---|---|---|
+| false | - | stops with "Results already exist", as before |
+| true | missing, or not covering every stored pair | adds V2 only |
+| true | complete | nothing |
+
+Adding V2 to a stored result reruns inference on the held-out half only (the
+maps V2 needs were not saved) for exactly the conditions `summary.csv` holds,
+with the fitted half, qualitative samples and saved predictions switched off.
+The recomputed V1 rows are compared with the stored ones and the run stops if
+they disagree beyond float noise, since that means the model, adapter or
+perturbations changed and V2 would not match its V1. Only `summary_v2.csv`,
+`category_metrics_v2.csv` (also in each separated slice) and
+`run_config_v2_<model>.json` are written, plus refreshed archives; every V1 file
+is left as it was. `overwrite: true` still reruns everything.
+
 ## Scoring the images a perturbation was fitted on
 
 `evaluate_attack_train: true` scores each perturbation a second time, over the

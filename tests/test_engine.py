@@ -319,6 +319,58 @@ def test_bidirectional_off_or_unpaired_writes_no_v2(tmp_path):
         assert without == with_v2, name
 
 
+def test_stored_v1_gets_only_v2_added(tmp_path):
+    mvtec = _bidirectional_fixture(tmp_path)
+    output = _evaluate_pair(tmp_path, mvtec, "results", evaluate_bidirectional=False)
+    v1_files = ("summary.csv", "category_metrics.csv", "per_image.csv",
+                "manifest_snapshot.json", "run_config_test_adapter.json")
+    before = {name: (output / name).read_bytes() for name in v1_files}
+    assert not (output / "summary_v2.csv").exists()
+    # Without V2 the old guard stands.
+    try:
+        _evaluate_pair(tmp_path, mvtec, "results", evaluate_bidirectional=False)
+    except FileExistsError:
+        pass
+    else:
+        raise AssertionError("an existing V1 result must not be re-run")
+
+    _evaluate_pair(tmp_path, mvtec, "results")
+    # V2 is added; every V1 file is left byte for byte.
+    assert {name: (output / name).read_bytes() for name in v1_files} == before
+    with (output / "summary_v2.csv").open(newline="") as handle:
+        (row,) = list(csv.DictReader(handle))
+    assert float(row["adversarial_i_auroc"]) == 0.0
+    record = json.loads((output / "run_config_v2_test_adapter.json").read_text())
+    assert record["v2_only"] is True and record["status"] == "completed"
+    assert record["evaluate_attack_train"] is False
+    assert (
+        tmp_path / "results" / "zero_shot" / "test_adapter_separated" / "setups"
+        / "frozen_prompt" / "steps500_eps2" / "datasets" / "mvtec_to_mvtec"
+        / "per_dataset" / "numerical" / "summary_v2.csv"
+    ).is_file()
+
+    # Complete now: a further run does nothing.
+    stamp = (output / "run_config_v2_test_adapter.json").read_bytes()
+    _evaluate_pair(tmp_path, mvtec, "results")
+    assert (output / "run_config_v2_test_adapter.json").read_bytes() == stamp
+
+
+def test_v2_only_refuses_a_stored_v1_it_cannot_reproduce(tmp_path):
+    mvtec = _bidirectional_fixture(tmp_path)
+    output = _evaluate_pair(tmp_path, mvtec, "results", evaluate_bidirectional=False)
+    with (output / "summary.csv").open(newline="") as handle:
+        rows = list(csv.DictReader(handle))
+    rows[0]["adversarial_i_auroc"] = "10.0"  # as if another model had produced it
+    _csv(output / "summary.csv", list(rows[0]), rows)
+    try:
+        _evaluate_pair(tmp_path, mvtec, "results")
+    except ValueError as error:
+        assert "differs from the stored result" in str(error)
+    else:
+        raise AssertionError("a V1 that no longer reproduces must stop the V2 run")
+    assert not (output / "summary_v2.csv").exists()
+
+
 def test_max_sample_conditions_keeps_only_the_strongest_per_scope(tmp_path):
     from fpeval.engine import _SampleBudget
 
