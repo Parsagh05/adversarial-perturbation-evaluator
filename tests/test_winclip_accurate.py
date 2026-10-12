@@ -234,3 +234,83 @@ def test_the_image_score_definitions_differ():
     original = inspect.getsource(winclip)
     assert '"image_score": "abnormal softmax probability of the class token"' in accurate
     assert '"image_score": "max of the anomaly map"' in original
+
+
+def test_few_shot_port_is_registered_as_few_shot():
+    from fpeval.adapters.base import _ADAPTERS, regime
+
+    for name in ("winclip_accurate_fewshot", "winclip-accurate-fewshot"):
+        assert name in adapter_names(), name
+        assert regime(name) == "few_shot", name
+    assert _ADAPTERS["winclip_accurate_fewshot"] is (
+        winclip_accurate.AccurateWinCLIPFewShotAdapter
+    )
+
+
+def test_few_shot_settings_follow_few_shot_sh():
+    """few_shot.sh runs k 1, 2, 4 with the argparse default seed 10."""
+    assert winclip_accurate.FEW_SHOT_VALUES == (1, 2, 4)
+    assert winclip_accurate.FEW_SHOT_SEED == 10
+    params = inspect.signature(
+        winclip_accurate.AccurateWinCLIPFewShotAdapter.__init__
+    ).parameters
+    assert params["k_shot"].default == 1
+    assert params["shot_seed"].default == 10
+    assert len(winclip_accurate.OBJ_LIST["mvtec"]) == 15
+    assert len(winclip_accurate.OBJ_LIST["visa"]) == 12
+
+
+def test_few_shot_distance_matches_reproduce_winclip():
+    """The upstream few_shot(): half the cosine distance to the nearest memory token."""
+    import torch
+    import torch.nn.functional as F
+
+    torch.manual_seed(0)
+    memory = torch.randn(2 * 5, 1, 8)          # k=2 images x 5 tokens
+    tokens = torch.randn(3, 5, 1, 8)           # batch of 3
+    ours = winclip_accurate._few_shot_distance(memory, tokens)
+
+    retrieve = memory.permute(2, 1, 0).reshape(8, -1)
+    retrieve = torch.stack([retrieve] * 3)
+    upstream = 0.5 * torch.min(
+        1.0 - torch.bmm(F.normalize(tokens.squeeze(2), dim=-1),
+                        F.normalize(retrieve, dim=1)),
+        dim=-1,
+    )[0]
+    assert torch.allclose(ours, upstream)
+    # A token equal to a memory token has distance zero.
+    assert torch.isclose(
+        winclip_accurate._few_shot_distance(memory, memory[:5].reshape(1, 5, 1, 8))[0, 0],
+        torch.tensor(0.0), atol=1e-6,
+    )
+
+
+def test_zero_shot_port_adds_no_few_shot_term():
+    adapter = object.__new__(winclip_accurate.AccurateWinCLIPAdapter)
+    fused, score = object(), object()
+    assert adapter._add_few_shot("x", None, None, None, None, None, fused, score) == (
+        fused, score
+    )
+
+
+def test_selection_draws_with_replacement_in_obj_list_order():
+    """dataset.py: torch.randint per class, with replacement, classes in obj_list order."""
+    import torch
+
+    class Reference:
+        def categories(self):
+            return ["bottle", "carpet"]
+
+        def candidates(self, category):
+            return [f"{category}_{i}" for i in range(7)]
+
+    adapter = object.__new__(winclip_accurate.AccurateWinCLIPFewShotAdapter)
+    adapter._reference, adapter.k_shot, adapter.shot_seed = Reference(), 4, 10
+    selection = adapter._draw_selection("mvtec")
+
+    generator = torch.Generator().manual_seed(10)
+    expected = {}
+    for category in ("carpet", "bottle"):   # obj_list order: carpet comes first
+        indices = torch.randint(0, 7, (4,), generator=generator)
+        expected[category] = [f"{category}_{int(i)}" for i in indices]
+    assert selection == expected

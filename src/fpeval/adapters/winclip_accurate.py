@@ -29,8 +29,8 @@ image decision to the segmentation, while the class-token probability is a
 separate head, so the two ports can disagree on an image while agreeing on where
 the defect is.
 
-Zero-shot only: ``reproduce_WinCLIP.py`` takes ``--k_shot 0`` for the zero-shot
-row of ``zero_shot.sh``, and the few-shot memory bank is never built here.
+``winclip_accurate`` is the zero-shot row (``zero_shot.sh``, ``--k_shot 0``);
+``winclip_accurate_fewshot`` adds the few-shot memory of ``few_shot.sh``.
 """
 
 from __future__ import annotations
@@ -44,6 +44,7 @@ import numpy as np
 import torch
 
 from .base import ModelAdapter, register_adapter
+from .reference import NormalReference
 
 
 CLIP_MEAN = (0.48145466, 0.4578275, 0.40821073)
@@ -315,6 +316,10 @@ class AccurateWinCLIPAdapter(ModelAdapter):
                            + 1.0 / image_score.unsqueeze(1).unsqueeze(1)),
                     nan=0.0, posinf=0.0, neginf=0.0,
                 )
+                fused, image_score = self._add_few_shot(
+                    category, large_tokens, mid_tokens, patch_tokens.unsqueeze(2),
+                    large_mask, mid_mask, fused, image_score,
+                )
                 fused = torch.nn.functional.interpolate(
                     fused.unsqueeze(1).float(),
                     size=(self.input_size, self.input_size),
@@ -326,9 +331,191 @@ class AccurateWinCLIPAdapter(ModelAdapter):
                     scores[index] = float(image_score[position])
         return scores, maps
 
+    def _add_few_shot(
+        self, category, large_tokens, mid_tokens, patch_tokens,
+        large_mask, mid_mask, fused, image_score,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Zero-shot: the map and score stand as they are."""
+        return fused, image_score
+
     def close(self) -> None:
         self._model = None
         self._module = None
         self._text.clear()
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
+
+
+# few_shot.sh evaluates these shot counts; reproduce_WinCLIP.py's argparse seed
+# default, which few_shot.sh does not override.
+FEW_SHOT_VALUES = (1, 2, 4)
+FEW_SHOT_SEED = 10
+# The order reproduce_WinCLIP.py builds the memory in (its obj_list). The k-shot
+# draws come from one generator in this order, so a category's selection does
+# not depend on which category the cohort reaches first.
+OBJ_LIST = {
+    "mvtec": ("carpet", "bottle", "hazelnut", "leather", "cable", "capsule", "grid",
+              "pill", "transistor", "metal_nut", "screw", "toothbrush", "zipper",
+              "tile", "wood"),
+    "visa": ("candle", "capsules", "cashew", "chewinggum", "fryum", "macaroni1",
+             "macaroni2", "pcb1", "pcb2", "pcb3", "pcb4", "pipe_fryum"),
+}
+
+
+def _few_shot_distance(memory: torch.Tensor, tokens: torch.Tensor) -> torch.Tensor:
+    """``reproduce_WinCLIP.few_shot`` for one class.
+
+    Half the cosine distance from each token to its nearest memory token, over
+    every token of every reference image. ``tokens`` is ``[B, N, 1, D]``;
+    ``memory`` is the references' tokens concatenated along dim 0, ``[kN, 1, D]``.
+    """
+    dims = memory.shape[-1]
+    retrieve = memory.permute(2, 1, 0).reshape(dims, -1)            # [D, kN]
+    retrieve = retrieve.unsqueeze(0).expand(len(tokens), -1, -1)    # [B, D, kN]
+    similarity = torch.bmm(
+        torch.nn.functional.normalize(tokens.squeeze(2), dim=-1),
+        torch.nn.functional.normalize(retrieve, dim=1),
+    )
+    return 0.5 * torch.min(1.0 - similarity, dim=-1)[0]             # [B, N]
+
+
+@register_adapter("winclip-accurate-fewshot")
+@register_adapter("winclip_accurate_fewshot")
+class AccurateWinCLIPFewShotAdapter(AccurateWinCLIPAdapter):
+    """zqhang/Accurate-WinCLIP-pytorch few-shot inference (``few_shot.sh``).
+
+    ``reproduce_WinCLIP.py`` with ``--k_shot`` 1, 2 or 4, ``ViT-B-16-plus-240``
+    at 240 pixels and the default seed 10. Per class it keeps a memory of the
+    k reference images' large-window, mid-window and patch tokens. Each test
+    token's few-shot score is half the cosine distance to its nearest memory
+    token; the window scores are harmonically aggregated onto the patch grid,
+    the three averaged, and the result *added* to the zero-shot map. The image
+    score becomes the mean of the zero-shot class-token probability and the
+    maximum of that few-shot map.
+
+    Reference selection follows ``dataset.py``: per class ``torch.randint`` draws
+    k indices, with replacement, from the normal training images, one generator
+    seeded with 10 and the classes taken in ``obj_list`` order. Two things
+    cannot be byte-identical: upstream indexes ``meta.json``'s list (here the
+    sorted training images) and its global generator has already been advanced
+    by model construction. The selected file names are recorded in
+    ``runtime_metadata``. References are always clean.
+    """
+
+    name = "winclip_accurate_fewshot"
+
+    def __init__(
+        self,
+        *,
+        k_shot: int = 1,
+        shot_seed: int = FEW_SHOT_SEED,
+        mvtec_root: str | None = None,
+        visa_root: str | None = None,
+        **kwargs,
+    ) -> None:
+        if int(k_shot) not in FEW_SHOT_VALUES:
+            raise ValueError(f"few_shot.sh evaluates k_shot in {FEW_SHOT_VALUES}")
+        kwargs.setdefault("seed", FEW_SHOT_SEED)
+        super().__init__(**kwargs)
+        target = str(kwargs["target_dataset"]).strip().lower()
+        self.k_shot = int(k_shot)
+        self.shot_seed = int(shot_seed)
+        self._reference = NormalReference(
+            dataset=target, mvtec_root=mvtec_root, visa_root=visa_root,
+            image_size=self.image_size,
+        )
+        self._selection = self._draw_selection(target)
+        self._memory: dict[str, tuple[torch.Tensor, torch.Tensor, torch.Tensor]] = {}
+        self._runtime_metadata.update({
+            "adapter": self.name,
+            "official_entrypoint_defaults": "reproduce_WinCLIP.py (few_shot.sh)",
+            "mode": "few_shot",
+            "k_shot": self.k_shot,
+            "shot_seed": self.shot_seed,
+            "reference_selection": (
+                "torch.randint with replacement per class, one generator seeded "
+                "with shot_seed, classes in obj_list order, over the sorted normal "
+                "training images"
+            ),
+            "image_score": "mean of the class-token abnormal probability and "
+                           "the maximum of the few-shot map",
+        })
+
+    def _draw_selection(self, target: str) -> dict[str, list]:
+        generator = torch.Generator().manual_seed(self.shot_seed)
+        known = set(self._reference.categories())
+        selection = {}
+        for category in OBJ_LIST[target]:
+            if category not in known:
+                continue
+            candidates = self._reference.candidates(category)
+            indices = torch.randint(
+                0, len(candidates), (self.k_shot,), generator=generator
+            )
+            selection[category] = [candidates[int(i)] for i in indices]
+        return selection
+
+    def _category_memory(
+        self, category: str, large_mask: torch.Tensor, mid_mask: torch.Tensor
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        cached = self._memory.get(category)
+        if cached is not None:
+            return cached
+        try:
+            samples = self._selection[category]
+        except KeyError:
+            raise KeyError(f"No few-shot references drawn for {category!r}") from None
+        references = self._reference.cached(category, samples).to(self.device)
+        references = self._resize(
+            references, [self.input_size, self.input_size],
+            interpolation=self._bicubic, antialias=True,
+        ).clamp(0, 1)
+        references = (references - self._mean) / self._std
+        tokens, _, patch_tokens = self._model.model.encode_image(
+            references, [large_mask, mid_mask], proj=False
+        )
+        # memory() appends each image's tokens and concatenates along dim 0.
+        memory = tuple(
+            torch.cat(list(item), dim=0)
+            for item in (tokens[0], tokens[1], patch_tokens.unsqueeze(2))
+        )
+        self._memory[category] = memory
+        return memory
+
+    def _add_few_shot(
+        self, category, large_tokens, mid_tokens, patch_tokens,
+        large_mask, mid_mask, fused, image_score,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        count, grid = len(fused), fused.shape[-1]
+        large_memory, mid_memory, patch_memory = self._category_memory(
+            category, large_mask, mid_mask
+        )
+        large = _harmonic_aggregation(
+            (count, grid, grid), _few_shot_distance(large_memory, large_tokens),
+            large_mask,
+        )
+        mid = _harmonic_aggregation(
+            (count, grid, grid), _few_shot_distance(mid_memory, mid_tokens),
+            mid_mask,
+        )
+        patch = _few_shot_distance(patch_memory, patch_tokens).reshape(
+            count, grid, grid
+        ).double()
+        few_shot_score = torch.nan_to_num(
+            (large + mid + patch) / 3.0, nan=0.0, posinf=0.0, neginf=0.0
+        )
+        fused = fused + few_shot_score
+        peak = torch.max(torch.max(few_shot_score, dim=1)[0], dim=1)[0]
+        return fused, (image_score + peak) / 2.0
+
+    def runtime_metadata(self) -> dict[str, object]:
+        data = super().runtime_metadata()
+        data["reference_images"] = {
+            category: NormalReference.describe(samples)
+            for category, samples in sorted(self._selection.items())
+        }
+        return data
+
+    def close(self) -> None:
+        self._memory.clear()
+        super().close()

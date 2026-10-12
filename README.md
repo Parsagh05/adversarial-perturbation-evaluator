@@ -610,10 +610,19 @@ the defect is. Both are training-free, neither blurs its map, and both resize th
 puts ahead of any installed copy; its extra therefore deliberately omits
 `open_clip_torch`, which could only shadow the vendored one.
 
+`winclip_accurate_fewshot` is the same port with the few-shot memory of
+`few_shot.sh` (`reproduce_WinCLIP.py --k_shot 1|2|4`, seed 10). Per class it keeps
+the k references' large-window, mid-window and patch tokens; each test token's
+few-shot score is half the cosine distance to its nearest memory token, the window
+scores are harmonically aggregated onto the patch grid and the three averaged.
+That map is **added** to the zero-shot map, and the image score becomes the mean
+of the class-token probability and the few-shot map's maximum. It uses the same
+pip extra, `winclip_accurate`.
+
 ## Few-shot adapters
 
-Three adapters have few-shot counterparts: `winclip_fewshot`, `afclip_fewshot`
-and `aprilgan_fewshot`. Each scores the cohort against a small set of normal
+Four adapters have few-shot counterparts: `winclip_fewshot`,
+`winclip_accurate_fewshot`, `afclip_fewshot` and `aprilgan_fewshot`. Each scores the cohort against a small set of normal
 **training** images. That reference set is built once per category and never
 touched while the cohort is scored, so unlike a transductive method it never
 makes one prediction depend on which cohort images came before it. The
@@ -632,6 +641,12 @@ than unified:
   VisA ships no such file — the official loader draws `random.sample` under the
   run seed (111/333/999) — so the adapter draws deterministically from the
   sorted normal training images with that seed.
+- **Accurate-WinCLIP** (`dataset.py`) draws `torch.randint` per class, **with
+  replacement**, from one generator, classes in `obj_list` order, seed 10. The
+  adapter does the same over the sorted normal training images; the exact files
+  can differ from upstream, whose indices address `meta.json`'s list and whose
+  global generator model construction has already advanced. The files used are
+  recorded in `runtime_metadata`.
 - **AF-CLIP** uses `np.random.choice` without replacement under the process
   seed, and its few-shot script passes `--seed -1`, a fresh random seed per
   repeat with five repeats averaged. There is no canonical selection, so
@@ -645,7 +660,7 @@ than unified:
 
 ### Which shot counts each few-shot model can run
 
-Nine of the eleven few-shot adapters cover the usual 1/2/4 sweep. Two do not,
+Ten of the twelve few-shot adapters cover the usual 1/2/4 sweep. Two do not,
 and in both cases that is a property of what the authors released rather than a
 gap in the adapter:
 
@@ -653,7 +668,7 @@ gap in the adapter:
 | --- | --- | --- |
 | WinCLIP few-shot | **1, 5, 10** | `datasets/*.py` assert `k_shot in [0, 1, 5, 10]`, and the committed `selected_samples_per_run.txt` lists only those selections |
 | InCTRL | **2, 4, 8** | the released archives hold `checkpoints/{2,4,8}` and `<dataset>/{2,4,8}/<class>.pt` |
-| AF-CLIP, APRIL-GAN, SubspaceAD, INP-Former, FADE, UniVAD, DictAS, KAG-Prompt, PromptAD | 1, 2, 4 | released weights, pinned selections or a free memory bank at each count |
+| Accurate-WinCLIP few-shot, AF-CLIP, APRIL-GAN, SubspaceAD, INP-Former, FADE, UniVAD, DictAS, KAG-Prompt, PromptAD | 1, 2, 4 | released weights, pinned selections or a free memory bank at each count |
 
 So **no single k covers everything**: at k=1 InCTRL drops out, and at k=2 or 4
 WinCLIP does. A 1/2/4 table still holds both, just not at every column.
@@ -961,7 +976,7 @@ adapter
 
 Notebooks and run scripts are split by regime: `notebooks/zero_shot/` and
 `scripts/zero_shot/` hold everything above, and `notebooks/few_shot/` and
-`scripts/few_shot/` hold `winclip_fewshot`, `afclip_fewshot`,
+`scripts/few_shot/` hold `winclip_fewshot`, `winclip_accurate_fewshot`, `afclip_fewshot`,
 `aprilgan_fewshot`, `subspacead` and `inpformer`.
 
 - MVTec AD;

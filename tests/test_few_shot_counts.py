@@ -25,6 +25,8 @@ SUPPORTED = {
     # datasets/seeds_mvtec/<class>/selected_samples_per_run.txt only lists
     # "<run>-1", "<run>-5" and "<run>-10" selections.
     "winclip_fewshot": frozenset({1, 5, 10}),
+    # few_shot.sh: few_shots=(1 2 4).
+    "winclip_accurate_fewshot": frozenset({1, 2, 4}),
     # The released Drive archive holds checkpoints/{2,4,8}/checkpoint.pyth and
     # the sample-prompt archive holds <dataset>/{2,4,8}/<class>.pt.
     "inctrl": frozenset({2, 4, 8}),
@@ -116,7 +118,7 @@ def test_only_two_models_fall_outside_the_usual_sweep():
     partial = {name: sorted(shots) for name, shots in SUPPORTED.items()
                if not SWEEP <= shots}
     assert partial == {"winclip_fewshot": [1, 5, 10], "inctrl": [2, 4, 8]}
-    assert len(full) == 9
+    assert len(full) == 10
     # Neither exception is empty at every point of the sweep, so both still
     # appear in a 1/2/4 comparison - just not at every k.
     assert SUPPORTED["winclip_fewshot"] & SWEEP == {1}
