@@ -6,6 +6,7 @@ from collections.abc import Sequence
 import hashlib
 import importlib
 import json
+import os
 from pathlib import Path
 import sys
 from types import SimpleNamespace
@@ -152,12 +153,19 @@ def _import_official_repository(repository: str | Path):
         )
         if not origin.startswith(root_text):
             sys.modules.pop(name, None)
-    return (
-        importlib.import_module("models.model_CLIP"),
-        importlib.import_module("models.DictAS"),
-        importlib.import_module("models.prompt_ensemble"),
-        importlib.import_module("models.utils"),
-    )
+    # model_CLIP builds its tokenizer at import time from './models/bpe_simple_vocab_16e6.txt.gz',
+    # relative to the repository root.
+    cwd = os.getcwd()
+    os.chdir(root)
+    try:
+        return (
+            importlib.import_module("models.model_CLIP"),
+            importlib.import_module("models.DictAS"),
+            importlib.import_module("models.prompt_ensemble"),
+            importlib.import_module("models.utils"),
+        )
+    finally:
+        os.chdir(cwd)
 
 
 def _sha256(path: Path) -> str:
