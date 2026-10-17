@@ -78,6 +78,8 @@ inpformer = [
   "scipy>=1.10",
   "timm>=0.9",
   "torchvision>=0.15",
+  # utils.py imports cv2.
+  "opencv-python>=4.6",
 ]
 subspacead = [
   # Training-free: the DINOv2 backbone comes from HuggingFace at load time.
@@ -98,6 +100,8 @@ fade = [
   "scikit-learn>=1.2",
   "torchvision>=0.15",
   "xgboost>=2.0",
+  # utils/embeddings.py reads its prompt tables with pandas.
+  "pandas>=1.5",
 ]
 inctrl = [
   # Weights and few-shot prompts are Drive-only, so gdown fetches them.
@@ -109,6 +113,11 @@ inctrl = [
   "scikit-learn>=1.2",
   "timm>=0.9",
   "torchvision>=0.15",
+  # open_clip/utils/{misc,logging}.py and the tokenizer import these.
+  "fvcore>=0.1.5",
+  "psutil>=5.9",
+  "simplejson>=3.17",
+  "transformers>=4.30",
 ]
 craneplus = [
   # The Crane+ row adds the D-Attention branch, whose dinov2_vitb14_reg backbone
@@ -162,6 +171,11 @@ kagprompt = [
   "timm>=0.9",
   "torchaudio>=2.0",
   "torchvision>=0.15",
+  # code/header.py imports these unconditionally (inherited from AnomalyGPT).
+  "deepspeed>=0.10",
+  "ipdb>=0.13",
+  "peft>=0.4",
+  "transformers>=4.30",
 ]
 promptad = [
   # Weights are not published by the authors; the retrained checkpoints are
@@ -174,6 +188,12 @@ promptad = [
   "scikit-learn>=1.2",
   "scipy>=1.10",
   "torchvision>=0.15",
+  # Imported on the server path too (Kaggle preinstalls them): CLIPAD's
+  # modified_resnet uses open_clip.utils, datasets/__init__ logs with loguru.
+  "loguru>=0.7",
+  "open_clip_torch>=2.20",
+  "timm>=0.9",
+  "transformers>=4.30",
 ]
 rempad = [
   # Weights were trained for this project and are mirrored on Kaggle. The
@@ -228,6 +248,10 @@ univad = [
   "torchvision>=0.15",
   "transformers>=4.30",
   "yapf>=0.40",
+  # GroundingDINO's backbone and utils/comad_utils.py import these.
+  "ipdb>=0.13",
+  "torchmetrics>=1.0",
+  "wget>=3.2",
 ]
 winclip = [
   # WinCLIP is training-free; open_clip downloads the laion400m backbone.

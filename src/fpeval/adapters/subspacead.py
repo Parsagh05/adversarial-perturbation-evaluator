@@ -35,13 +35,15 @@ def _import_official_repository(repository: str | Path):
             f"Official SubspaceAD repository is incomplete at {root}; missing {missing}"
         )
     root_text = str(root)
-    if root_text in sys.path:
-        sys.path.remove(root_text)
-    sys.path.insert(0, root_text)
+    # The adapter imports "src.subspacead.*" from the root, but the package's own
+    # modules import "subspacead.*", so src/ has to be importable as well.
+    for entry in (str(root / "src"), root_text):
+        if entry in sys.path:
+            sys.path.remove(entry)
+        sys.path.insert(0, entry)
     importlib.invalidate_caches()
-    # The package is imported as "src.subspacead" from the repository root.
     for name in list(sys.modules):
-        if not (name == "src" or name.startswith("src.")):
+        if not (name in {"src", "subspacead"} or name.startswith(("src.", "subspacead."))):
             continue
         module = sys.modules.get(name)
         if module is None:
