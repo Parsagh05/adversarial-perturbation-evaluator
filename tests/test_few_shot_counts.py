@@ -48,6 +48,10 @@ SUPPORTED = {
     "kagprompt": frozenset({1, 2, 4}),
     # The released package covers 1, 2 and 4 shots per class and task.
     "promptad": frozenset({1, 2, 4}),
+    # Trained for this project at k = 4 only: ReMP-AD's reference set is the one
+    # test.py recorded in k_shot.txt, IIPAD's soft prompt is trained per k.
+    "rempad": frozenset({4}),
+    "iipad": frozenset({4}),
 }
 # The usual comparison grid.
 SWEEP = frozenset({1, 2, 4})
@@ -107,17 +111,18 @@ def test_declared_shot_values_match_the_supported_set():
             continue
         assert frozenset(declared) == supported, name
         checked += 1
-    # WinCLIP, InCTRL, SubspaceAD, INP-Former, DictAS, KAG-Prompt and PromptAD
-    # all pin one; the rest accept any positive count.
-    assert checked >= 7
+    # WinCLIP, InCTRL, SubspaceAD, INP-Former, DictAS, KAG-Prompt, PromptAD,
+    # ReMP-AD and IIPAD all pin one; the rest accept any positive count.
+    assert checked >= 9
 
 
-def test_only_two_models_fall_outside_the_usual_sweep():
-    """The 1/2/4 grid is available everywhere except these two."""
+def test_only_four_models_fall_outside_the_usual_sweep():
+    """The 1/2/4 grid is available everywhere except these four."""
     full = {name for name, shots in SUPPORTED.items() if SWEEP <= shots}
     partial = {name: sorted(shots) for name, shots in SUPPORTED.items()
                if not SWEEP <= shots}
-    assert partial == {"winclip_fewshot": [1, 5, 10], "inctrl": [2, 4, 8]}
+    assert partial == {"winclip_fewshot": [1, 5, 10], "inctrl": [2, 4, 8],
+                       "rempad": [4], "iipad": [4]}
     assert len(full) == 10
     # Neither exception is empty at every point of the sweep, so both still
     # appear in a 1/2/4 comparison - just not at every k.
@@ -130,9 +135,11 @@ def test_no_single_shot_count_covers_every_adapter():
     for k in SWEEP:
         missing = {name for name, shots in SUPPORTED.items() if k not in shots}
         assert missing, f"k={k} unexpectedly covers everything"
-    assert {name for name, shots in SUPPORTED.items() if 1 not in shots} == {"inctrl"}
+    assert {name for name, shots in SUPPORTED.items() if 1 not in shots} == {
+        "inctrl", "rempad", "iipad"
+    }
     assert {name for name, shots in SUPPORTED.items() if 2 not in shots} == {
-        "winclip_fewshot"
+        "winclip_fewshot", "rempad", "iipad"
     }
     assert {name for name, shots in SUPPORTED.items() if 4 not in shots} == {
         "winclip_fewshot"

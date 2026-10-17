@@ -175,6 +175,36 @@ promptad = [
   "scipy>=1.10",
   "torchvision>=0.15",
 ]
+rempad = [
+  # Weights were trained for this project and are mirrored on Kaggle. The
+  # official repository vendors open_clip (ftfy/regex/timm) and its VLPF scoring
+  # finds connected regions with OpenCV.
+  "ftfy>=6.0",
+  "kagglehub>=1.0.2",
+  "opencv-python>=4.6",
+  "regex>=2023.0",
+  "timm>=0.9",
+  "torchvision>=0.15",
+  "tqdm>=4.60",
+]
+iipad = [
+  # Weights were trained for this project and are mirrored on Kaggle.
+  # BlipDiffusionPipeline is only in older diffusers; these three pins are the
+  # set that imports together (diffusers 0.23 needs huggingface_hub < 0.26,
+  # transformers' generation code needs >= 0.23). VVCLIP_lib imports thop and
+  # kornia, the map is blurred with scipy.
+  "diffusers==0.23.1",
+  "ftfy>=6.0",
+  "huggingface-hub==0.25.2",
+  "kagglehub>=1.0.2",
+  "kornia>=0.7",
+  "regex>=2023.0",
+  "scipy>=1.10",
+  "thop>=0.1.1",
+  "timm>=0.9",
+  "torchvision>=0.15",
+  "transformers==4.35.2",
+]
 univad = [
   # Training-free, but heavy: models/ vendors CLIP, SAM-HQ and Grounding DINO,
   # models/dinov2 is a submodule, and the two segmentation checkpoints are

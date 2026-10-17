@@ -660,18 +660,20 @@ than unified:
 
 ### Which shot counts each few-shot model can run
 
-Ten of the twelve few-shot adapters cover the usual 1/2/4 sweep. Two do not,
-and in both cases that is a property of what the authors released rather than a
-gap in the adapter:
+Ten of the fourteen few-shot adapters cover the usual 1/2/4 sweep. Four do not:
+two because of what the authors released, two because their weights were
+trained for this project at k = 4 only:
 
 | adapter | shot counts | why |
 | --- | --- | --- |
 | WinCLIP few-shot | **1, 5, 10** | `datasets/*.py` assert `k_shot in [0, 1, 5, 10]`, and the committed `selected_samples_per_run.txt` lists only those selections |
 | InCTRL | **2, 4, 8** | the released archives hold `checkpoints/{2,4,8}` and `<dataset>/{2,4,8}/<class>.pt` |
 | Accurate-WinCLIP few-shot, AF-CLIP, APRIL-GAN, SubspaceAD, INP-Former, FADE, UniVAD, DictAS, KAG-Prompt, PromptAD | 1, 2, 4 | released weights, pinned selections or a free memory bank at each count |
+| ReMP-AD | **4** | no released weights; trained here with the official `train.py`/configs, and the reference set is the one the official `test.py` recorded in `k_shot.txt` at k = 4 (Kaggle `parsagholami1383/rempad-few-shot-checkpoints-mvtec-ad-and-visa`) |
+| IIPAD (One-for-All) | **4** | no released weights; the soft prompt is trained per k, here with the official `main.py` at k = 4 (Kaggle `parsagholami1383/iipad-4-shot-checkpoints-mvtec-ad-and-visa`; `checkpoint` `best` = the epoch the paper reports, `last` = final epoch). Runs the soft prompt in eval mode, where upstream leaves dropout on at test time |
 
-So **no single k covers everything**: at k=1 InCTRL drops out, and at k=2 or 4
-WinCLIP does. A 1/2/4 table still holds both, just not at every column.
+So **no single k covers everything**: at k=1 InCTRL drops out, at k=2 or 4
+WinCLIP does, and ReMP-AD and IIPAD run at k=4 only. A 1/2/4 table still holds both, just not at every column.
 
 The shipped configs and notebooks each sit at their own model's paper default,
 which is a mix of 1, 2 and 4 - deliberately, so a single run reproduces that

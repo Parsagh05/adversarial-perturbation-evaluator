@@ -14,6 +14,7 @@ FEW_SHOT = {
     "winclip_fewshot", "afclip_fewshot", "aprilgan_fewshot",
     "subspacead", "inpformer", "fade", "inctrl", "univad",
     "dictas", "kagprompt", "promptad", "winclip_accurate_fewshot",
+    "rempad", "iipad",
 }
 
 
