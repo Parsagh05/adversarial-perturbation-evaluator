@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 import hashlib
 import importlib
+import os
 from pathlib import Path
 import sys
 
@@ -111,10 +112,17 @@ def _import_official_repository(repository: str | Path):
         )
         if not origin.startswith(code_text):
             sys.modules.pop(name, None)
-    return (
-        importlib.import_module("model.openllama"),
-        importlib.import_module("model.ImageBind.data"),
-    )
+    # openllama.py tokenizes a prompt at import time with ImageBind's BPE_PATH,
+    # which is relative to code/ (where the official scripts are started).
+    cwd = os.getcwd()
+    os.chdir(code)
+    try:
+        return (
+            importlib.import_module("model.openllama"),
+            importlib.import_module("model.ImageBind.data"),
+        )
+    finally:
+        os.chdir(cwd)
 
 
 def _sha256(path: Path) -> str:

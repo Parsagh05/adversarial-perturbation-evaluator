@@ -103,19 +103,22 @@ def _use_reference_deformable_attention() -> None:
     NameError. The reference function computes the same attention in PyTorch.
     """
 
-    module = importlib.import_module("groundingdino.models.GroundingDINO.ms_deform_attn")
-    if hasattr(module, "_C"):
-        return
-    reference = module.multi_scale_deformable_attn_pytorch
+    # UniVAD imports GroundingDINO as models.GroundingDINO.groundingdino..., so the
+    # same file may be loaded under more than one module name: patch every copy.
+    importlib.import_module("models.GroundingDINO.groundingdino.models.GroundingDINO.ms_deform_attn")
+    for name, module in list(sys.modules.items()):
+        if not name.endswith("GroundingDINO.ms_deform_attn") or hasattr(module, "_C"):
+            continue
+        reference = module.multi_scale_deformable_attn_pytorch
 
-    class ReferenceFunction:
-        @staticmethod
-        def apply(value, spatial_shapes, level_start_index, sampling_locations,
-                  attention_weights, im2col_step):
-            del level_start_index, im2col_step
-            return reference(value, spatial_shapes, sampling_locations, attention_weights)
+        class ReferenceFunction:
+            @staticmethod
+            def apply(value, spatial_shapes, level_start_index, sampling_locations,
+                      attention_weights, im2col_step, _reference=reference):
+                del level_start_index, im2col_step
+                return _reference(value, spatial_shapes, sampling_locations, attention_weights)
 
-    module.MultiScaleDeformableAttnFunction = ReferenceFunction
+        module.MultiScaleDeformableAttnFunction = ReferenceFunction
 
 
 @contextmanager

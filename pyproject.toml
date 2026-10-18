@@ -86,6 +86,8 @@ inpformer = [
   "scikit-image>=0.20",
   # utils.py imports pandas.
   "pandas>=1.5",
+  # models/ imports kornia.
+  "kornia>=0.7",
 ]
 subspacead = [
   # Training-free: the DINOv2 backbone comes from HuggingFace at load time.
