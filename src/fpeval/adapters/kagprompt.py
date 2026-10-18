@@ -296,6 +296,12 @@ class KAGPromptAdapter(ModelAdapter):
         self.seed = int(seed)
 
         openllama_module, data_module = _import_official_repository(repository)
+        # ImageBind's tokenizer opens BPE_PATH relative to code/, the directory the
+        # official scripts are started from.
+        data_module.BPE_PATH = str(
+            Path(repository).expanduser().resolve() / "code" / "model" / "ImageBind"
+            / "bpe" / "bpe_simple_vocab_16e6.txt.gz"
+        )
         from torchvision.transforms import InterpolationMode
         from torchvision.transforms import functional as TF
 

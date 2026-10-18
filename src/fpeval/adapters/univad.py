@@ -85,11 +85,37 @@ def _import_official_repository(repository: str | Path):
         )
         if not origin.startswith(root_text):
             sys.modules.pop(name, None)
-    return (
+    modules = (
         importlib.import_module("UniVAD"),
         importlib.import_module("models.component_segmentaion"),
         importlib.import_module("models.grounded_sam"),
     )
+    _use_reference_deformable_attention()
+    return modules
+
+
+def _use_reference_deformable_attention() -> None:
+    """Fall back to GroundingDINO's PyTorch deformable attention without its CUDA op.
+
+    ms_deform_attn.py only falls back to multi_scale_deformable_attn_pytorch on
+    the CPU; on a GPU it calls the compiled groundingdino._C, which exists only
+    after building GroundingDINO with nvcc. Without it the forward raises
+    NameError. The reference function computes the same attention in PyTorch.
+    """
+
+    module = importlib.import_module("groundingdino.models.GroundingDINO.ms_deform_attn")
+    if hasattr(module, "_C"):
+        return
+    reference = module.multi_scale_deformable_attn_pytorch
+
+    class ReferenceFunction:
+        @staticmethod
+        def apply(value, spatial_shapes, level_start_index, sampling_locations,
+                  attention_weights, im2col_step):
+            del level_start_index, im2col_step
+            return reference(value, spatial_shapes, sampling_locations, attention_weights)
+
+    module.MultiScaleDeformableAttnFunction = ReferenceFunction
 
 
 @contextmanager
