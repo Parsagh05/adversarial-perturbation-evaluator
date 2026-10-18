@@ -91,7 +91,38 @@ def _import_official_repository(repository: str | Path):
         importlib.import_module("models.grounded_sam"),
     )
     _use_reference_deformable_attention()
+    _use_matmul_patch_similarity(modules[0])
     return modules
+
+
+class _MatmulCosineFunctional:
+    """torch.nn.functional for UniVAD.py with a memory-light cosine_similarity.
+
+    UniVAD.forward compares every query patch with every reference patch as
+    F.cosine_similarity(query[N, 1, D], reference[1, M, D], dim=2), which
+    broadcasts to an N x M x D tensor first (about 16 GB at 448 px and k = 4).
+    The same N x M similarities come from one matrix product of the normalised
+    tokens. Any other call is passed to torch.nn.functional unchanged.
+    """
+
+    def __init__(self, functional):
+        self._functional = functional
+
+    def __getattr__(self, name):
+        return getattr(self._functional, name)
+
+    def cosine_similarity(self, x1, x2, dim=1, eps=1e-8):
+        if (dim == 2 and x1.dim() == 3 and x2.dim() == 3
+                and x1.shape[1] == 1 and x2.shape[0] == 1):
+            # torch: x1.x2 / max(|x1| |x2|, eps); identical whenever the norms exceed eps.
+            norms = x1[:, 0].norm(dim=-1, keepdim=True) * x2[0].norm(dim=-1, keepdim=True).T
+            return (x1[:, 0] @ x2[0].T) / norms.clamp_min(eps)
+        return self._functional.cosine_similarity(x1, x2, dim=dim, eps=eps)
+
+
+def _use_matmul_patch_similarity(univad_module) -> None:
+    if not isinstance(univad_module.F, _MatmulCosineFunctional):
+        univad_module.F = _MatmulCosineFunctional(univad_module.F)
 
 
 def _use_reference_deformable_attention() -> None:
