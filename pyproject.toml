@@ -88,6 +88,8 @@ inpformer = [
   "pandas>=1.5",
   # models/ imports kornia.
   "kornia>=0.7",
+  # requirements.txt pins it (fast AUROC/AUPRO helpers its utils import).
+  "adeval==1.1.0",
 ]
 subspacead = [
   # Training-free: the DINOv2 backbone comes from HuggingFace at load time.
