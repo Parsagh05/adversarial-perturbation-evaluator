@@ -89,6 +89,12 @@ def _import_official_repository(repository: str | Path):
         sys.path.remove(code_text)
     sys.path.insert(0, code_text)
     importlib.invalidate_caches()
+    # pytorchvideo imports torchvision.transforms.functional_tensor, which
+    # torchvision 0.17 removed; its functions (rgb_to_grayscale) live on in
+    # torchvision.transforms.functional, and torchvision must match torch.
+    import torchvision.transforms.functional as _functional
+
+    sys.modules.setdefault("torchvision.transforms.functional_tensor", _functional)
     # Other target repositories ship modules with these names.
     for name in list(sys.modules):
         if not (

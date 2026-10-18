@@ -82,6 +82,8 @@ inpformer = [
   "opencv-python>=4.6",
   # utils.py imports matplotlib.
   "matplotlib>=3.6",
+  # utils.py imports skimage.measure for the PRO metric.
+  "scikit-image>=0.20",
 ]
 subspacead = [
   # Training-free: the DINOv2 backbone comes from HuggingFace at load time.
