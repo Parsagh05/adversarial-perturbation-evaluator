@@ -83,12 +83,13 @@ def _import_official_repository(repository: str | Path):
 class FADEAdapter(ModelAdapter):
     """Official FADE few-shot inference for MVTec AD and VisA.
 
-    Follows scripts/run_fade.py at its defaults, which are the same settings its
-    ``--experiment-name`` default spells out (``cm_both_sm_both/img_size_448/
-    1shot``): a GEM-wrapped ``ViT-B/16-plus-240`` with ``laion400m_e31`` weights,
-    language **and** vision guidance for both classification and segmentation,
-    CLIP features for language classification at 240 pixels, GEM features for
-    everything else, and segmentation run at 240, 448 and 896 pixels then
+    Follows the README's few-shot command for scripts/run_fade.py
+    (``cm_both_sm_both_clip_gem_clip``): a GEM-wrapped ``ViT-B/16-plus-240``
+    with ``laion400m_e31`` weights, language **and** vision guidance for both
+    classification and segmentation, CLIP features for language classification
+    at 240 pixels, GEM features for language segmentation, CLIP patch features
+    for the vision memory bank (the script's own default is GEM, which the paper
+    reports as inferior), and segmentation run at 240, 448 and 896 pixels then
     averaged on the 56x56 grid of the largest.
 
     The two branches combine exactly as the script does. The image score is the
@@ -140,7 +141,9 @@ class FADEAdapter(ModelAdapter):
         segmentation_mode: str = "both",
         language_classification_feature: str = "clip",
         language_segmentation_feature: str = "gem",
-        vision_feature: str = "gem",
+        # run_fade.py defaults to "gem", but the README's few-shot command and
+        # the paper (Sec. 3, "GEM embeddings ... inferior") use CLIP patches.
+        vision_feature: str = "clip",
         vision_segmentation_multiplier: float = 3.5,
         vision_segmentation_weight: float = 0.85,
         classification_img_size: int = 240,

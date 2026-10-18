@@ -346,6 +346,18 @@ class INPFormerAdapter(ModelAdapter):
                 if keep > 0
                 else flat.max(dim=1)[0]
             )
+            # The map covers only the centre crop, while the evaluator's mask is
+            # the whole image (the official script crops the mask too). Put the
+            # map back where the crop sits in the 448 frame; the border the model
+            # never sees gets the map's minimum.
+            anomaly_map = torch.nn.functional.interpolate(
+                anomaly_map, size=self.crop_size, mode="bilinear", align_corners=False
+            )
+            pad = (self.input_size - self.crop_size) // 2
+            floor = anomaly_map.flatten(1).min(dim=1)[0].view(-1, 1, 1, 1)
+            framed = floor.expand(-1, 1, self.input_size, self.input_size).clone()
+            framed[..., pad:pad + self.crop_size, pad:pad + self.crop_size] = anomaly_map
+            anomaly_map = framed
         return (
             scores.float().cpu().numpy().astype(np.float32),
             anomaly_map[:, 0].float().cpu().numpy().astype(np.float32),
