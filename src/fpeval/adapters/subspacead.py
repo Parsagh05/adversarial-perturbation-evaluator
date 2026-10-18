@@ -22,6 +22,31 @@ SHOT_VALUES = (1, 2, 4)
 NO_AUG_CATEGORIES = frozenset({"transistor"})
 
 
+def _skip_attention_maps(model) -> None:
+    """Stop the backbone from returning every layer's attention maps.
+
+    extract_tokens always calls the model with output_attentions=True, but only
+    reads attentions[dino_saliency_layer] for a saliency mask the adapter never
+    uses. For dinov2-giant at 672 px the 40 stored maps alone take ~20 GB, so the
+    model now runs without them and returns zero placeholders of the same shape.
+    The patch features (hidden states) are computed exactly as before.
+    """
+
+    forward = model.forward
+
+    def without_attentions(*args, output_attentions=None, **kwargs):
+        del output_attentions
+        outputs = forward(*args, output_attentions=False, **kwargs)
+        hidden = outputs.hidden_states[0]
+        placeholder = hidden.new_zeros(
+            hidden.shape[0], model.config.num_attention_heads, hidden.shape[1], hidden.shape[1]
+        )
+        outputs.attentions = (placeholder,) * model.config.num_hidden_layers
+        return outputs
+
+    model.forward = without_attentions
+
+
 def _import_official_repository(repository: str | Path):
     root = Path(repository).expanduser().resolve()
     required = (
@@ -153,6 +178,7 @@ class SubspaceADAdapter(ModelAdapter):
         torch.manual_seed(self.shot_seed)
         np.random.seed(self.shot_seed)
         self._extractor = extractor_module.FeatureExtractor(model_ckpt)
+        _skip_attention_maps(self._extractor.model)
         self._reference = NormalReference(
             dataset=target_key,
             mvtec_root=mvtec_root,

@@ -80,6 +80,8 @@ inpformer = [
   "torchvision>=0.15",
   # utils.py imports cv2.
   "opencv-python>=4.6",
+  # utils.py imports matplotlib.
+  "matplotlib>=3.6",
 ]
 subspacead = [
   # Training-free: the DINOv2 backbone comes from HuggingFace at load time.
@@ -94,7 +96,9 @@ fade = [
   # the default "average" model never touches it.
   "ftfy>=6.0",
   "gem-torch>=1.0.1",
-  "open_clip_torch>=2.20",
+  # gem-torch calls open_clip.create_model with 15 positional arguments in
+  # the 2.24-2.32 order; 3.0 inserted load_weights and shifts them.
+  "open_clip_torch>=2.24,<3",
   "opencv-python>=4.8",
   "regex>=2023.0",
   "scikit-learn>=1.2",
@@ -171,11 +175,14 @@ kagprompt = [
   "timm>=0.9",
   "torchaudio>=2.0",
   "torchvision>=0.15",
-  # code/header.py imports these unconditionally (inherited from AnomalyGPT).
+  # code/header.py imports these unconditionally (inherited from AnomalyGPT),
+  # including transformers.deepspeed, which newer transformers removed. The
+  # transformers/huggingface_hub pair is the one IIPAD runs with.
   "deepspeed>=0.10",
   "ipdb>=0.13",
-  "peft>=0.4",
-  "transformers>=4.30",
+  "peft==0.6.2",
+  "transformers==4.35.2",
+  "huggingface-hub==0.25.2",
 ]
 promptad = [
   # Weights are not published by the authors; the retrained checkpoints are
@@ -252,6 +259,8 @@ univad = [
   "ipdb>=0.13",
   "torchmetrics>=1.0",
   "wget>=3.2",
+  # GroundingDINO's util imports tensorboard.
+  "tensorboard>=2.10",
 ]
 winclip = [
   # WinCLIP is training-free; open_clip downloads the laion400m backbone.
