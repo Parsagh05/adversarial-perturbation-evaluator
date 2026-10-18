@@ -278,6 +278,7 @@ class PromptADAdapter(ModelAdapter):
             "checkpoint_source": KAGGLE_DATASET,
             "checkpoint_keys": list(CHECKPOINT_KEYS),
             "image_score_checkpoint": "CLS",
+            "image_score": "1 / (1/max(CLS map) + 1/CLS textual score), metric_cal_img",
             "anomaly_map_checkpoint": "SEG",
             "reference_set": "baked into the released checkpoint",
             "released_checkpoints_are_retrained": True,
@@ -369,11 +370,15 @@ class PromptADAdapter(ModelAdapter):
                     )
                 selected = batch[indices]
 
-                # test_cls.py: the image score comes from the CLS checkpoint.
+                # test_cls.py: the image score comes from the CLS checkpoint, as
+                # utils/metrics.metric_cal_img combines it: the harmonic mean of the
+                # textual score s and the maximum m of the CLS map, 1 / (1/m + 1/s).
+                # The map is already at the 400-pixel grid specify_resolution uses.
                 self._load(category, "CLS")
-                image_scores, _ = self._model(selected, "cls")
-                for position, value in zip(indices, image_scores):
-                    scores[position] = float(value)
+                image_scores, cls_maps = self._model(selected, "cls")
+                for position, value, cls_map in zip(indices, image_scores, cls_maps):
+                    peak = float(np.asarray(cls_map, dtype=np.float64).max())
+                    scores[position] = float(1.0 / (1.0 / peak + 1.0 / float(value)))
 
                 # test_seg.py: the map comes from the SEG checkpoint, already
                 # blurred at sigma 4 inside the forward.
