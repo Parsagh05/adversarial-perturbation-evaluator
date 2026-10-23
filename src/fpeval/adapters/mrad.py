@@ -455,3 +455,55 @@ class MRADAdapter(ModelAdapter):
         self._patch_values = None
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
+
+
+# MRAD-FT publishes no weights (the Drive folder holds MRAD-CLIP only).
+# train_pipeline/train_mrad_ft.sh trains it with the official train.py
+# (--model_type mrad-ft, 1 epoch) and stores <checkpoint_root>/test_on_<target>.pth.
+MRAD_FT_CHECKPOINT = "test_on_{target}.pth"
+
+
+@register_adapter("mrad-ft")
+@register_adapter("mrad_ft")
+class MRADFTAdapter(MRADAdapter):
+    """MRAD-FT: the memory-bank projections only, no prompt learner (README).
+
+    Same official test.py path as MRAD with ``--model_type mrad-ft``: the
+    segmentation map is the projected patch retrieval against the other
+    dataset's released memory bank, and the image score fuses it with the
+    projected image retrieval at k = 0.7. Only the checkpoint differs.
+    """
+
+    name = "mrad_ft"
+
+    def __init__(
+        self,
+        *,
+        repository: str,
+        target_dataset: str,
+        checkpoint_root: str | None = None,
+        checkpoint: str | None = None,
+        **kwargs,
+    ) -> None:
+        if kwargs.pop("model_type", "mrad-ft") != "mrad-ft":
+            raise ValueError("MRADFTAdapter always runs model_type='mrad-ft'")
+        if checkpoint is None:
+            if checkpoint_root is None:
+                raise ValueError("MRAD-FT needs checkpoint or checkpoint_root")
+            key = target_dataset.strip().lower()
+            path = Path(checkpoint_root).expanduser().resolve() / MRAD_FT_CHECKPOINT.format(target=key)
+            if not path.is_file():
+                raise FileNotFoundError(
+                    f"MRAD-FT checkpoint not found: {path}. MRAD-FT releases no "
+                    "weights; train them with train_pipeline/train_mrad_ft.sh."
+                )
+            checkpoint = str(path)
+        super().__init__(
+            repository=repository,
+            target_dataset=target_dataset,
+            checkpoint=checkpoint,
+            model_type="mrad-ft",
+            **kwargs,
+        )
+        self._runtime_metadata["adapter"] = self.name
+        self._runtime_metadata["checkpoint_source"] = "trained by us (train_mrad_ft.sh)"

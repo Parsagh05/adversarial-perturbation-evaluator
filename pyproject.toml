@@ -415,6 +415,38 @@ aaclip = [
   "timm==0.6.12",
   "torchvision>=0.15",
 ]
+moeclip = [
+  # MoECLIP is built on AA-CLIP's code and imports the same modules; its LoRA
+  # experts import transformers.activations. No released weights: they are
+  # trained by train_pipeline/train_moeclip.sh.
+  "einops>=0.7",
+  "ftfy>=6.0",
+  # forward_utils.py imports ipdb at module scope.
+  "ipdb>=0.13",
+  "kornia==0.6.9",
+  "opencv-python>=4.8",
+  "pandas>=1.5",
+  "regex>=2023.0",
+  "scikit-learn>=1.2",
+  "scipy>=1.10",
+  # model/openai.py imports pkg_resources, which setuptools 81 removed.
+  "setuptools<81",
+  "timm==0.6.12",
+  "torchvision>=0.15",
+  "transformers>=4.30",
+]
+mrad_ft = [
+  # Same code and memory banks as mrad; the checkpoint is trained by
+  # train_pipeline/train_mrad_ft.sh.
+  "ftfy>=6.0",
+  "gdown>=5.0",
+  "regex>=2023.0",
+  "scikit-learn>=1.2",
+  "scipy>=1.11",
+  "tabulate>=0.9",
+  "thop>=0.1",
+  "torchvision>=0.15",
+]
 
 [project.scripts]
 fpeval = "fpeval.cli:main"

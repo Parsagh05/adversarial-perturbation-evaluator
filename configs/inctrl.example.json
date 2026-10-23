@@ -19,13 +19,17 @@
       "repository": "/path/to/InCTRL",
       "target_dataset": "mvtec",
       "shot": 2,
-      "download_root": "/path/to/inctrl_cache"
+      "download_root": "/path/to/inctrl_cache",
+      "checkpoint": "/path/to/trained/inctrl/trained_on_visa/checkpoints/4/checkpoint.pyth",
+      "few_shot_dir": "/path/to/trained/inctrl/few_shot/mvtec"
     },
     "visa": {
       "repository": "/path/to/InCTRL",
       "target_dataset": "visa",
       "shot": 2,
-      "download_root": "/path/to/inctrl_cache"
+      "download_root": "/path/to/inctrl_cache",
+      "checkpoint": "/path/to/trained/inctrl/trained_on_mvtecad/checkpoints/4/checkpoint.pyth",
+      "few_shot_dir": "/path/to/trained/inctrl/few_shot/visa"
     }
   },
   "device": "cuda",
