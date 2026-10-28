@@ -495,3 +495,216 @@ class InCTRLAdapter(ModelAdapter):
         self._head_score.clear()
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
+
+
+# The published normal prompts are 240-pixel tensors; a match must be this much
+# closer than the next candidate image before it is accepted.
+REFERENCE_MATCH_MARGIN = 4.0
+# diff_head is Linear(225, 128) over the 15x15 patches of a 240-pixel input.
+NATIVE_GRID = 15
+
+
+@register_adapter("inctrl_512")
+class InCTRL512Adapter(InCTRLAdapter):
+    """InCTRL run at 512 pixels instead of its native 240.
+
+    The perturbation is made at 518 pixels, so at 240 InCTRL downsamples it with
+    the image. 512 is the nearest size its 16-pixel patches tile (32x32). Three
+    things in InCTRL are tied to 240 and are handled here, leaving the rest of
+    the official forward as it is:
+
+    * The backbone is built at 512. ``load_checkpoint`` only loads weights whose
+      shape matches, so it would leave the position embeddings at their random
+      initialization; the checkpoint is loaded here instead, with InCTRL's own
+      ``resize_pos_embed``, and every weight must load.
+    * ``diff_head`` is ``Linear(225, 128)`` over the 15x15 holistic map, one
+      weight per patch position. At 512 the map is 32x32, so it is area-pooled
+      to 15x15 for that head only - each pooled cell covers the image area of
+      one native patch. The patch residual map, its maximum (half the score)
+      and the returned map stay at 32x32.
+    * The published normal prompts exist only as 240-pixel tensors. Each is
+      matched to its normal training image, which is then prepared at 512 the
+      same way (shorter side resized, centre crop); an ambiguous match is an
+      error.
+    """
+
+    name = "inctrl_512"
+
+    def __init__(
+        self,
+        *,
+        repository: str,
+        target_dataset: str,
+        shot: int = 4,
+        model_image_size: int = 512,
+        model_config: str = "ViT-B-16-plus-240",
+        mvtec_root: str | None = None,
+        visa_root: str | None = None,
+        **kwargs: object,
+    ) -> None:
+        super().__init__(
+            repository=repository, target_dataset=target_dataset, shot=shot,
+            model_image_size=model_image_size, model_config=model_config, **kwargs,
+        )
+        model_module = sys.modules["open_clip.model"]
+        self._official = model_module
+        config_path = (
+            Path(repository).expanduser().resolve() / "open_clip" / "model_configs"
+            / f"{model_config}.json"
+        )
+        with config_path.open("r", encoding="utf-8") as handle:
+            settings = json.load(handle)
+        vision = dict(settings["vision_cfg"], image_size=self.model_image_size)
+        np.random.seed(self.rng_seed)
+        torch.manual_seed(self.rng_seed)
+        arguments = SimpleNamespace(
+            shot=self.shot, image_size=self.model_image_size, category=None,
+            RNG_SEED=self.rng_seed,
+        )
+        model = model_module.InCTRL(
+            arguments, settings["embed_dim"], vision, settings["text_cfg"], False,
+            cast_dtype=model_module.get_cast_dtype("fp32"),
+        )
+        checkpoint = torch.load(str(self._checkpoint), map_location="cpu")
+        state = checkpoint.get("model_state", checkpoint)
+        model_module.resize_pos_embed(state, model)
+        result = model.load_state_dict(state, strict=False)
+        if result.missing_keys:
+            raise ValueError(
+                f"InCTRL at {self.model_image_size} px did not load {result.missing_keys}"
+            )
+        self._model = model.to(self.device).eval()
+        if tuple(self._model.visual.grid_size) != (self.grid, self.grid):
+            raise ValueError(
+                f"InCTRL grid {self._model.visual.grid_size} at {self.model_image_size} px"
+            )
+
+        from .reference import NormalReference
+
+        self._reference = NormalReference(
+            dataset=self.target_dataset, mvtec_root=mvtec_root, visa_root=visa_root
+        )
+        self._matched: dict[str, list[str]] = {}
+        self._runtime_metadata["patch_grid"] = self.grid
+        self._runtime_metadata["resolution_variant"] = (
+            f"{self.model_image_size} px instead of the native 240; position embeddings "
+            "resized at load; holistic map area-pooled to 15x15 for diff_head only; "
+            "published prompts matched to their images and prepared at this size"
+        )
+
+    def runtime_metadata(self) -> dict[str, object]:
+        data = super().runtime_metadata()
+        data["reference_images"] = dict(sorted(self._matched.items()))
+        return data
+
+    def _prepare_reference(self, path: Path, size: int) -> torch.Tensor:
+        """Shorter side resized, centre crop, CLIP normalization, as test.py prepares images."""
+
+        from PIL import Image
+        from torchvision.transforms import functional as TF
+
+        image = Image.open(path).convert("RGB")
+        tensor = TF.to_tensor(image).to(self.device)
+        tensor = TF.resize(tensor, size, interpolation=self._bicubic, antialias=True)
+        tensor = TF.center_crop(tensor, [size, size]).clamp(0, 1)
+        return ((tensor - self._mean[0]) / self._std[0]).float()
+
+    def _normal_list(self, category: str) -> list[torch.Tensor]:
+        cached = self._prompts.get(category)
+        if cached is not None:
+            return cached
+        published = super()._normal_list(category)  # the k 240-pixel tensors
+        self._prompts.pop(category, None)
+        candidates = [sample.image_path for sample in self._reference.candidates(category)]
+        small = 60
+        with torch.no_grad():
+            pool = torch.stack([
+                torch.nn.functional.interpolate(
+                    self._prepare_reference(path, 240)[None], size=(small, small), mode="area"
+                )[0]
+                for path in candidates
+            ]).flatten(1)
+            chosen = []
+            for tensor in published:
+                target = torch.nn.functional.interpolate(
+                    tensor.float().reshape(1, 3, 240, 240), size=(small, small), mode="area"
+                ).flatten(1)
+                error = ((pool - target) ** 2).mean(dim=1)
+                best, second = torch.topk(error, k=2, largest=False).values.tolist()
+                if best * REFERENCE_MATCH_MARGIN > second:
+                    raise ValueError(
+                        f"InCTRL {category}: a published prompt matches no single normal "
+                        f"training image clearly (best {best:.3g}, next {second:.3g})"
+                    )
+                chosen.append(candidates[int(error.argmin())])
+        self._matched[category] = [Path(path).name for path in chosen]
+        tensors = [self._prepare_reference(path, self.model_image_size) for path in chosen]
+        self._prompts[category] = tensors
+        return tensors
+
+    def _forward(self, image: torch.Tensor, category: str) -> tuple[float, torch.Tensor]:
+        """InCTRL.forward for one image, with the grid read off the tokens."""
+
+        F = torch.nn.functional
+        model = self._model
+        normal_image = torch.stack(self._normal_list(category))
+        shot = normal_image.shape[0]
+        token, Fp_list, _ = model.encode_image(image, normalize=False)
+        token_n, Fp_list_n, _ = model.encode_image(normal_image, normalize=False)
+        Fp_list = torch.stack(Fp_list)[:, :, 1:, :]      # [3, 1, N, C]
+        Fp_list_n = torch.stack(Fp_list_n)[:, :, 1:, :]  # [3, shot, N, C]
+        patches = Fp_list.shape[2]
+        Fp = Fp_list.reshape(3, patches, -1)
+        Fp_n = Fp_list_n.reshape(3, shot * patches, -1)
+
+        token_ad = model.adapter.forward(token)
+        token_n = model.adapter.forward(token_n.reshape(1, shot, -1))
+        token_ref = torch.mean(token_n, dim=1) - token_ad
+
+        # 0.5 * (1 - cosine) to the nearest normal patch, mean over the layers.
+        query = Fp / Fp.norm(dim=-1, keepdim=True)
+        normal = Fp_n / Fp_n.norm(dim=-1, keepdim=True)
+        distance = (0.5 * (1 - query @ normal.transpose(1, 2))).min(dim=2).values
+        patch_ref_map = distance.mean(dim=0)[None]       # [1, N]
+        fg_score = patch_ref_map.max(dim=1).values
+
+        image_feature = token[0][None]
+        image_feature = image_feature / image_feature.norm(dim=-1, keepdim=True)
+        normal_texts, anomaly_texts = self._official.get_texts(category.replace("_", " "))
+        texts = []
+        for prompts in (normal_texts, anomaly_texts):
+            features = model.encode_text(self._tokenizer(prompts).to(self.device))
+            features = features / features.norm(dim=-1, keepdim=True)
+            features = features.mean(dim=0, keepdim=True)
+            texts.append(features / features.norm(dim=-1, keepdim=True))
+        text_score = (100 * image_feature @ torch.cat(texts, dim=0).T).softmax(dim=-1)[0, 1]
+
+        img_ref_score = model.diff_head_ref.forward(token_ref)
+        holistic_map = text_score + img_ref_score + patch_ref_map
+        side = int(round(patches ** 0.5))
+        pooled = F.adaptive_avg_pool2d(holistic_map.view(1, 1, side, side), NATIVE_GRID)
+        hl_score = model.diff_head.forward(pooled.view(1, NATIVE_GRID * NATIVE_GRID)).squeeze(1)
+        final_score = (hl_score + fg_score) / 2
+        return float(final_score.reshape(-1)[0]), patch_ref_map.view(side, side)
+
+    def predict(
+        self, images: torch.Tensor, categories: Sequence[str]
+    ) -> tuple[np.ndarray, np.ndarray]:
+        if len(images) != len(categories):
+            raise ValueError("InCTRL received mismatched images and categories")
+        resized = self._resize(
+            images.to(self.device, dtype=torch.float32),
+            [self.model_image_size, self.model_image_size],
+            interpolation=self._bicubic, antialias=True,
+        ).clamp(0, 1)
+        normalized = (resized - self._mean) / self._std
+        scores = np.empty(len(images), dtype=np.float32)
+        maps = np.empty((len(images), self.grid, self.grid), dtype=np.float32)
+        with torch.no_grad():
+            for index in range(len(images)):
+                score, patch_map = self._forward(
+                    normalized[index : index + 1], str(categories[index])
+                )
+                scores[index] = score
+                maps[index] = patch_map.float().cpu().numpy()
+        return scores, maps

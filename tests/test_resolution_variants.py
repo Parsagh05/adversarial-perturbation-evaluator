@@ -10,21 +10,32 @@ import torch
 from fpeval.adapters import adapter_names, base, regime
 from fpeval.adapters.iipad import resize_vision_positions
 
-VARIANTS = {"anovl_512": ("anovl", 512), "promptad_512": ("promptad", 512), "iipad_518": ("iipad", 518)}
+# name -> (native model, constructor parameter that sets the size, its default)
+VARIANTS = {
+    "anovl_512": ("anovl", "model_image_size", 512),
+    "promptad_512": ("promptad", "model_image_size", 512),
+    "iipad_518": ("iipad", "model_image_size", 518),
+    "dictas_518": ("dictas", "model_image_size", 518),
+    "univad_518": ("univad", "model_image_size", 518),
+    "kagprompt_518": ("kagprompt", "model_image_size", 518),
+    "inctrl_512": ("inctrl", "model_image_size", 512),
+    "fade_512": ("fade", "classification_img_size", 512),
+    "winclip_accurate_512": ("winclip_accurate", "input_size", 512),
+}
 
 
 @pytest.mark.parametrize("name", sorted(VARIANTS))
 def test_variant_is_registered_in_its_base_models_regime(name):
-    native, _ = VARIANTS[name]
+    native = VARIANTS[name][0]
     assert name in adapter_names()
     assert regime(name) == regime(native)
 
 
 @pytest.mark.parametrize("name", sorted(VARIANTS))
 def test_variant_defaults_to_its_size_and_ships_a_config(name):
-    native, size = VARIANTS[name]
+    native, parameter, size = VARIANTS[name]
     parameters = inspect.signature(base._ADAPTERS[name].__init__).parameters
-    assert parameters["model_image_size"].default == size
+    assert parameters[parameter].default == size
     config = json.loads(Path(f"configs/{name}.example.json").read_text(encoding="utf-8"))
     native_config = json.loads(Path(f"configs/{native}.example.json").read_text(encoding="utf-8"))
     assert config["model"] == name
@@ -73,6 +84,19 @@ def test_anovl_512_softmax_matches_the_vendored_one_and_does_not_overflow():
     assert torch.isnan(vendored(large)).any()
     assert torch.isfinite(stable_softmax(large)).all()
     assert torch.allclose(stable_softmax(large), stable_softmax(small), atol=1e-6)
+
+
+def test_winclip_matrix_aggregation_matches_the_official_loop():
+    from fpeval.adapters.winclip_accurate import (
+        _harmonic_aggregation, harmonic_aggregation_matrix,
+    )
+
+    grid, kernel = 6, 3
+    board = torch.arange(1, grid * grid + 1, dtype=torch.float32).reshape(1, 1, grid, grid)
+    mask = torch.nn.functional.unfold(board, kernel_size=kernel, stride=1).squeeze()
+    similarity = torch.rand(2, mask.shape[1]) * 0.9 + 0.05
+    expected = _harmonic_aggregation((2, grid, grid), similarity, mask)
+    assert torch.allclose(harmonic_aggregation_matrix((2, grid, grid), similarity, mask), expected)
 
 
 def test_blip_positions_reject_a_size_off_the_patch_grid():

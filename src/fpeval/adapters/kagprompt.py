@@ -353,6 +353,7 @@ class KAGPromptAdapter(ModelAdapter):
             )
         model = model.to(self.device).eval()
         self._model = model
+        self._openllama = openllama_module
 
         self._reference = NormalReference(
             dataset=target_key,
@@ -455,7 +456,7 @@ class KAGPromptAdapter(ModelAdapter):
                 reference_keys = self._reference_for(category)
                 key = "<query>/current"
                 self._tensors[key] = batch[index]
-                anomaly_map, image_score = self._model.generate(
+                anomaly_map, image_score = self._generate(
                     {
                         "prompt": self._describles[category],
                         "image_paths": [key],
@@ -473,9 +474,101 @@ class KAGPromptAdapter(ModelAdapter):
                 self._tensors.pop(key, None)
         return scores, maps
 
+    def _generate(self, inputs: dict):
+        """The official forward, ``OpenLLAMAPEFTModel.generate``."""
+
+        return self._model.generate(inputs)
+
     def close(self) -> None:
         self._model = None
         self._tensors.clear()
         self._reference_keys.clear()
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
+
+
+@register_adapter("kagprompt_518")
+class KAGPrompt518Adapter(KAGPromptAdapter):
+    """KAG-Prompt run at 518 pixels instead of its native 224.
+
+    The perturbation is made at 518 pixels, so at 224 KAG-Prompt downsamples it
+    with the image. 518 is 37 patches of 14 for ImageBind-huge, whose
+    ``interpolate_pos_encoding`` resizes the position embeddings itself. The
+    trained heads act per token or by convolution, so they apply unchanged. Only
+    ``extract_multimodal_feature`` hardcodes the 224-pixel geometry (a 16x16
+    grid, 256 tokens, maps upsampled to 224), so ``_generate`` is that function
+    with the grid read off the tokens and the maps at the model size; every
+    other line, including the dead ``'mvtec' in 'normal_img_paths'`` branch,
+    is the official one.
+    """
+
+    name = "kagprompt_518"
+
+    # k_shot is spelled out: regime() reads the constructor's parameter names.
+    def __init__(self, *, k_shot: int = 1, model_image_size: int = 518, **kwargs: object) -> None:
+        super().__init__(k_shot=k_shot, model_image_size=model_image_size, **kwargs)
+        self._runtime_metadata["resolution_variant"] = (
+            f"{self.model_image_size} px instead of the native 224; ImageBind interpolates "
+            "its position embeddings; extract_multimodal_feature with the grid read off the tokens"
+        )
+
+    def _generate(self, inputs: dict):
+        """openllama.extract_multimodal_feature at ``model_image_size``."""
+
+        F = torch.nn.functional
+        model, official = self._model, self._openllama
+        size = self.model_image_size
+        prompt = inputs["prompt"]
+        c_name = "object"
+        for name in official.CLASS_NAMES:
+            if name in prompt:
+                c_name = name
+                break
+        image_embeds, patch_tokens = model.encode_image(inputs["image_paths"])
+        feats_text_tensor = official.encode_text_with_prompt_ensemble(
+            model.visual_encoder, [c_name], model.device
+        )
+
+        B = patch_tokens[0].size(0)
+        side = int(round(patch_tokens[0].size(1) ** 0.5))
+        patch_tokens = [patch_tokens[i].transpose(1, 2).view(B, 1024, side, side) for i in range(4)]
+        patch_tokens = model.mmci(patch_tokens)
+        outputs = list(model.aGNN(*patch_tokens))
+        patch_tokens = outputs + patch_tokens
+
+        anomaly_maps = []
+        for layer in range(len(patch_tokens)):
+            patch_tokens[layer] = patch_tokens[layer].view(
+                patch_tokens[layer].size(0), patch_tokens[layer].size(1), -1
+            ).permute(0, 2, 1)
+            patch_tokens[layer] = patch_tokens[layer] / patch_tokens[layer].norm(dim=-1, keepdim=True)
+            anomaly_map = 100.0 * patch_tokens[layer] @ feats_text_tensor.transpose(-2, -1)
+            B, L, C = anomaly_map.shape
+            H = int(np.sqrt(L))
+            anomaly_map = F.interpolate(
+                anomaly_map.permute(0, 2, 1).view(B, 2, H, H), size=size, mode="bilinear",
+                align_corners=True,
+            )
+            anomaly_map = torch.softmax(anomaly_map, dim=1)
+            anomaly_maps.append(anomaly_map[:, 1, :, :])
+
+        anomaly_map_ret = torch.mean(torch.stack(anomaly_maps, dim=0), dim=0).unsqueeze(1)
+        if inputs["normal_img_paths"]:
+            query_patch_tokens, _ = model.encode_image_for_one_shot(inputs["image_paths"])
+            # Upstream's `'mvtec' in 'normal_img_paths'` is always false.
+            normal_patch_tokens, _ = model.encode_image_for_one_shot(inputs["normal_img_paths"])
+            sims = []
+            for i in range(len(query_patch_tokens)):
+                query = query_patch_tokens[i].reshape(-1, 1, 1280)
+                normal = normal_patch_tokens[i].reshape(1, -1, 1280)
+                sim_max, _ = torch.max(F.cosine_similarity(query, normal, dim=2), dim=1)
+                sims.append(sim_max)
+            sim = torch.mean(torch.stack(sims, dim=0), dim=0).reshape(1, 1, side, side)
+            sim = F.interpolate(sim, size=size, mode="bilinear", align_corners=True)
+            anomaly_map = torch.softmax(torch.cat([sim, 1 - sim], dim=1), dim=1)
+            r = inputs["r"]
+            anomaly_map_ret = r * anomaly_map_ret + (1 - r) * anomaly_map[:, 1, :, :]
+
+        image_embeds = image_embeds / image_embeds.norm(dim=-1, keepdim=True)
+        image_map = image_embeds.unsqueeze(1) @ feats_text_tensor.transpose(-2, -1)
+        return anomaly_map_ret, image_map[0, 0, 1]

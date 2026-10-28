@@ -54,6 +54,8 @@ SHOT_VALUES = (1, 2, 4)
 ALPHA = 0.2
 # BESTSEGMENTATION sets this when TEST_For_BESTSEGMENTATION is True, its default.
 SIGMA = 6
+# test.sh's --image_size; SIGMA is in pixels of a map this size.
+NATIVE_IMAGE_SIZE = 336
 
 # The official k-shot selection, committed to the repository under fix_few_path
 # as paths into the authors' own converted "mvisa" tree (mvtec_000091.bmp and
@@ -305,7 +307,7 @@ class DictASAdapter(ModelAdapter):
         visa_root: str | None = None,
         device: str = "cuda",
         image_size: int = 518,
-        model_image_size: int = 336,
+        model_image_size: int = NATIVE_IMAGE_SIZE,
         backbone: str = "ViT-L-14-336",
         features: Sequence[int] = (6, 12, 18, 24),
         k_shot: int = 4,
@@ -325,6 +327,8 @@ class DictASAdapter(ModelAdapter):
         self.device = torch.device(device)
         self.image_size = int(image_size)
         self.model_image_size = int(model_image_size)
+        # The same blur relative to the image at any model size.
+        self._sigma = SIGMA * self.model_image_size / NATIVE_IMAGE_SIZE
         self.k_shot = int(k_shot)
         self.target_dataset = target_key
         self.seed = int(seed)
@@ -418,6 +422,7 @@ class DictASAdapter(ModelAdapter):
             "checkpoint_selection": selected,
             "test_for_best_segmentation": True,
             "official_gaussian_sigma": float(SIGMA),
+            "gaussian_sigma_at_model_size": self._sigma,
             "gaussian_applied_inside_adapter": True,
             "reference_selection": "official fix_few_path, resolved through meta_*.json",
             "rotated_support_category": ROTATED_CATEGORY,
@@ -570,7 +575,7 @@ class DictASAdapter(ModelAdapter):
 
         # calcuate_metric_pixel blurs before the pixel metrics and before the
         # map maximum that half the image score is taken from.
-        blurred = self._gaussian_filter(maps, sigma=SIGMA, axes=(1, 2))
+        blurred = self._gaussian_filter(maps, sigma=self._sigma, axes=(1, 2))
         return scores, blurred.astype(np.float32)
 
     # ------------------------------------------------------------ postprocess --
@@ -644,3 +649,25 @@ class DictASAdapter(ModelAdapter):
         self._text_cache.clear()
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
+
+
+@register_adapter("dictas_518")
+class DictAS518Adapter(DictASAdapter):
+    """DictAS run at 518 pixels instead of its native 336.
+
+    The perturbation is made at 518 pixels, so at 336 DictAS downsamples it with
+    the image. 518 is 37 patches of 14; the official ``Load_CLIP`` takes the size
+    and resizes the position embeddings itself. The dictionary acts per token,
+    so its trained weights apply unchanged, and the map blur scales with the
+    size (sigma 6 at 336 is 9.25 at 518) to cover the same share of the image.
+    """
+
+    name = "dictas_518"
+
+    # k_shot is spelled out: regime() reads the constructor's parameter names.
+    def __init__(self, *, k_shot: int = 4, model_image_size: int = 518, **kwargs: object) -> None:
+        super().__init__(k_shot=k_shot, model_image_size=model_image_size, **kwargs)
+        self._runtime_metadata["resolution_variant"] = (
+            f"{self.model_image_size} px instead of the native 336; position embeddings "
+            "resized by the official Load_CLIP; map blur scaled with the size"
+        )

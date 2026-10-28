@@ -414,3 +414,38 @@ class FADEAdapter(ModelAdapter):
         self._image_models.clear()
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
+
+
+@register_adapter("fade_512")
+class FADE512Adapter(FADEAdapter):
+    """FADE with its 240-pixel scales run at 512.
+
+    The perturbation is made at 518 pixels. FADE classifies at 240 and segments
+    at 240, 448 and 896, so the two 240 inputs downsample it by more than half;
+    both become 512, the nearest size its 16-pixel patches tile. 448 and 896,
+    which keep most or all of it, stay, so the pyramid is 448/512/896 and the
+    fused map is still averaged on the 56x56 grid of 896. GEM takes each size
+    itself. The method is training-free.
+    """
+
+    name = "fade_512"
+
+    # k_shot is spelled out: regime() reads the constructor's parameter names.
+    def __init__(
+        self,
+        *,
+        k_shot: int = 1,
+        classification_img_size: int = 512,
+        segmentation_img_sizes: Sequence[int] = (448, 512, 896),
+        **kwargs: object,
+    ) -> None:
+        super().__init__(
+            k_shot=k_shot,
+            classification_img_size=classification_img_size,
+            segmentation_img_sizes=segmentation_img_sizes,
+            **kwargs,
+        )
+        self._runtime_metadata["resolution_variant"] = (
+            "the native 240-pixel classification input and smallest segmentation scale "
+            f"at {self.classification_img_size}; segmentation scales {self.segmentation_img_sizes}"
+        )

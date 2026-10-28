@@ -599,3 +599,26 @@ class UniVADAdapter(ModelAdapter):
         self._configs.clear()
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
+
+
+@register_adapter("univad_518")
+class UniVAD518Adapter(UniVADAdapter):
+    """UniVAD run at 518 pixels instead of its native 448.
+
+    The perturbation is made at 518 pixels, so at 448 UniVAD downsamples it with
+    the image. 518 is 37 patches of 14 for both of its ViT-14 backbones:
+    ``UniVAD(image_size=...)`` derives every grid from the size, its CLIP
+    factory resizes the position embeddings and DINOv2 interpolates its own.
+    The method is training-free, and component segmentation runs at the same
+    size.
+    """
+
+    name = "univad_518"
+
+    # k_shot is spelled out: regime() reads the constructor's parameter names.
+    def __init__(self, *, k_shot: int = 1, model_image_size: int = 518, **kwargs: object) -> None:
+        super().__init__(k_shot=k_shot, model_image_size=model_image_size, **kwargs)
+        self._runtime_metadata["resolution_variant"] = (
+            f"{self.model_image_size} px instead of the native 448; UniVAD derives its grids "
+            "from image_size and its CLIP factory resizes the position embeddings"
+        )

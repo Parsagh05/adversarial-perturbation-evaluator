@@ -170,6 +170,11 @@ class AccurateWinCLIPAdapter(ModelAdapter):
         self.device = torch.device(device)
         self.image_size = int(image_size)
         self.input_size = int(input_size)
+        # Window kernels in pixels and the per-patch aggregation; hooks for a
+        # subclass that runs at another size.
+        self._large_kernel = LARGE_KERNEL
+        self._mid_kernel = MID_KERNEL
+        self._aggregate = _harmonic_aggregation
 
         module = _import_official_repository(repository)
         torch.manual_seed(int(seed))
@@ -204,7 +209,7 @@ class AccurateWinCLIPAdapter(ModelAdapter):
             "model_input_size": self.input_size,
             "cohort_image_size": self.image_size,
             "patch_size": PATCH_SIZE,
-            "window_kernels": [LARGE_KERNEL, MID_KERNEL],
+            "window_kernels": [self._large_kernel, self._mid_kernel],
             "prompt_templates": len(self._prompts.template_list),
             "k_shot": 0,
             "seed": int(seed),
@@ -270,10 +275,10 @@ class AccurateWinCLIPAdapter(ModelAdapter):
         maps = np.empty((len(batch), self.input_size, self.input_size),
                         dtype=np.float32)
         large_mask = self._scale.make_mask(
-            kernel_size=LARGE_KERNEL, patch_size=PATCH_SIZE
+            kernel_size=self._large_kernel, patch_size=PATCH_SIZE
         ).squeeze().to(self.device)
         mid_mask = self._scale.make_mask(
-            kernel_size=MID_KERNEL, patch_size=PATCH_SIZE
+            kernel_size=self._mid_kernel, patch_size=PATCH_SIZE
         ).squeeze().to(self.device)
 
         with torch.no_grad():
@@ -304,10 +309,10 @@ class AccurateWinCLIPAdapter(ModelAdapter):
                     mid_tokens, self._text_stack(category, count)
                 )[:, :, 1]
 
-                large_score = _harmonic_aggregation(
+                large_score = self._aggregate(
                     (count, grid, grid), large_similarity, large_mask
                 )
-                mid_score = _harmonic_aggregation(
+                mid_score = self._aggregate(
                     (count, grid, grid), mid_similarity, mid_mask
                 )
                 fused = torch.nan_to_num(
@@ -519,3 +524,68 @@ class AccurateWinCLIPFewShotAdapter(AccurateWinCLIPAdapter):
     def close(self) -> None:
         self._memory.clear()
         super().close()
+
+
+def harmonic_aggregation_matrix(
+    shape: tuple[int, int, int], similarity: torch.Tensor, mask: torch.Tensor
+) -> torch.Tensor:
+    """``_harmonic_aggregation`` as one matrix product.
+
+    Each patch takes the harmonic mean of the windows covering it; ``cover[p, w]``
+    is 1 where window ``w`` holds patch ``p``. The patch-by-window Python loop
+    upstream costs patches x windows ``isin`` calls, which at a 32x32 grid is
+    about twenty times the 15x15 one; the result is the same up to float64
+    summation order.
+    """
+
+    batch, height, width = shape
+    similarity = similarity.double()
+    windows = mask.T.long() - 1  # [W, k*k], 0-based patch indices
+    cover = torch.zeros(height * width, windows.shape[0], dtype=torch.float64,
+                        device=similarity.device)
+    columns = torch.arange(windows.shape[0], device=similarity.device)
+    cover[windows, columns.unsqueeze(1).expand_as(windows)] = 1.0
+    harmonic_sum = (1.0 / similarity) @ cover.T
+    return (cover.sum(dim=1) / harmonic_sum).reshape(batch, height, width)
+
+
+@register_adapter("winclip_accurate_512")
+class AccurateWinCLIP512Adapter(AccurateWinCLIPAdapter):
+    """Accurate-WinCLIP run at 512 pixels instead of its native 240.
+
+    The perturbation is made at 518 pixels, so at 240 WinCLIP downsamples it
+    with the image. 512 is the nearest size its 16-pixel patches tile (32x32).
+    ``CLIP_AD`` builds its backbone without a size, so it is built here through
+    the vendored factory's ``force_image_size``, which resizes the position
+    embeddings on load. The window kernels are in pixels and scale with the
+    image, 48/32 px at 240 to 96/64 px at 512, so each window covers the same
+    share of the image; and the per-patch harmonic aggregation is computed as a
+    matrix product with identical results. The method is training-free.
+    """
+
+    name = "winclip_accurate_512"
+
+    def __init__(self, *, repository: str, input_size: int = 512, **kwargs: object) -> None:
+        module = _import_official_repository(repository)
+        factory = module.open_clip.create_customer_model_and_transforms
+
+        def at_size(*args: object, **options: object):
+            options.setdefault("force_image_size", int(input_size))
+            return factory(*args, **options)
+
+        # CLIP_AD passes no size, so its 512 backbone is built through this.
+        module.open_clip.create_customer_model_and_transforms = at_size
+        try:
+            super().__init__(repository=repository, input_size=input_size, **kwargs)
+        finally:
+            module.open_clip.create_customer_model_and_transforms = factory
+        scale = self.input_size / 240
+        self._large_kernel = int(round(LARGE_KERNEL * scale / PATCH_SIZE)) * PATCH_SIZE
+        self._mid_kernel = int(round(MID_KERNEL * scale / PATCH_SIZE)) * PATCH_SIZE
+        self._aggregate = harmonic_aggregation_matrix
+        self._runtime_metadata["window_kernels"] = [self._large_kernel, self._mid_kernel]
+        self._runtime_metadata["resolution_variant"] = (
+            f"{self.input_size} px instead of the native 240; backbone built with "
+            "force_image_size; window kernels scaled with the image; harmonic "
+            "aggregation as a matrix product"
+        )
