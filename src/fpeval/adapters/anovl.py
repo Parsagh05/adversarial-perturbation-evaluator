@@ -420,3 +420,24 @@ def _reshape_tokens(tokens: torch.Tensor) -> torch.Tensor:
     if side * side != length:
         raise ValueError("AnoVL returned a non-square patch grid")
     return tokens.view(count, side, side, channels)
+
+
+@register_adapter("anovl_512")
+class AnoVL512Adapter(AnoVLAdapter):
+    """AnoVL run at 512 pixels instead of its native 240.
+
+    The perturbation is made at 518 pixels, so at 240 AnoVL downsamples it with
+    the image. 512 is the nearest size the 16-pixel patches tile (a 32x32 grid);
+    the official ``create_model`` takes the size and ``load_checkpoint`` resizes
+    the position embeddings to it. Nothing else changes: the method is
+    training-free and every layer it adapts at test time acts per token.
+    """
+
+    name = "anovl_512"
+
+    def __init__(self, *, model_image_size: int = 512, **kwargs: object) -> None:
+        super().__init__(model_image_size=model_image_size, **kwargs)
+        self._runtime_metadata["resolution_variant"] = (
+            f"{self.model_image_size} px instead of the native 240; position embeddings "
+            "resized by the official open_clip load_checkpoint"
+        )

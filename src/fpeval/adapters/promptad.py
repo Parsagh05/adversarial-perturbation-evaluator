@@ -238,7 +238,8 @@ class PromptADAdapter(ModelAdapter):
         # three saved buffers are the whole model - so one instance serves every
         # category and the backbone is built once instead of 27 times.
         anchor = self._categories[0]
-        model = model_module.PromptAD(
+        # Kept so a subclass can build a second instance at another size.
+        self._model_args = dict(
             out_size_h=self.resolution,
             out_size_w=self.resolution,
             device=str(self.device),
@@ -250,6 +251,10 @@ class PromptADAdapter(ModelAdapter):
             n_pro_ab=int(n_pro_ab),
             class_name=anchor,
             k_shot=self.k_shot,
+        )
+        self._model_module = model_module
+        model = model_module.PromptAD(
+            **self._model_args,
             img_resize=self.model_image_size,
             img_cropsize=self.model_image_size,
         ).to(self.device)
@@ -394,3 +399,181 @@ class PromptADAdapter(ModelAdapter):
         self._loaded = None
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
+
+
+# A stored gallery image and its recomputed features agree to rounding; any other
+# normal image of the class is far below this.
+GALLERY_MATCH_MIN = 0.98
+# dataset.py resizes every image to 1024 with cv2 before model.transform.
+TRAINING_READ_SIZE = 1024
+
+
+def _read_like_training(path: Path, transform) -> torch.Tensor:
+    """One image as train_cls.py feeds it: cv2 BGR, 1024 px, then model.transform."""
+
+    import cv2
+    from PIL import Image
+
+    image = cv2.imread(str(path), cv2.IMREAD_COLOR)
+    if image is None:
+        raise FileNotFoundError(f"Cannot read {path}")
+    image = cv2.resize(image, (TRAINING_READ_SIZE, TRAINING_READ_SIZE))
+    return transform(Image.fromarray(cv2.cvtColor(image, cv2.COLOR_BGR2RGB)))
+
+
+@register_adapter("promptad_512")
+class PromptAD512Adapter(PromptADAdapter):
+    """PromptAD run at 512 pixels instead of its native 240.
+
+    The perturbation is made at 518 pixels, so at 240 PromptAD downsamples it
+    with the image. 512 is the nearest size the 16-pixel patches tile (32x32):
+    the backbone is built with ``force_image_size=512``, which the official
+    factory turns into resized position embeddings.
+
+    A checkpoint's ``text_features`` are the learned prompts and do not depend on
+    the image size, so they are used as released. Its two galleries are the
+    patch features of the k reference images **at 240**, so they are rebuilt at
+    512 from the same images. Which images those are cannot be read off the seed
+    files reliably (MVTec's normal images are listed with an unsorted ``glob``),
+    so every normal training image of the class is encoded at 240 and matched to
+    the stored gallery; a stored image without a near-exact match is an error.
+    """
+
+    name = "promptad_512"
+
+    def __init__(
+        self,
+        *,
+        repository: str,
+        target_dataset: str,
+        k_shot: int = 4,
+        mvtec_root: str | None = None,
+        visa_root: str | None = None,
+        model_image_size: int = 512,
+        **kwargs: object,
+    ) -> None:
+        # k_shot is spelled out: regime() reads the constructor's parameter names.
+        model_module, _ = _import_official_repository(repository)
+        clipad = model_module.CLIPAD
+        official = clipad.create_model_and_transforms
+
+        def at_size(*args: object, **options: object):
+            options.setdefault("force_image_size", int(model_image_size))
+            return official(*args, **options)
+
+        # get_model passes no size, so the 512 backbone is built through this.
+        clipad.create_model_and_transforms = at_size
+        try:
+            super().__init__(
+                repository=repository,
+                target_dataset=target_dataset,
+                k_shot=k_shot,
+                model_image_size=model_image_size,
+                **kwargs,
+            )
+        finally:
+            clipad.create_model_and_transforms = official
+
+        from .reference import NormalReference
+
+        self._reference = NormalReference(
+            dataset=self.target_dataset, mvtec_root=mvtec_root, visa_root=visa_root
+        )
+        # Built only to recognize the stored reference images.
+        self._native = self._model_module.PromptAD(
+            **self._model_args, img_resize=MODEL_IMAGE_SIZE, img_cropsize=MODEL_IMAGE_SIZE
+        ).to(self.device)
+        self._native.eval_mode()
+        self._galleries: dict[tuple[str, str], tuple[torch.Tensor, ...]] = {}
+        self._matched: dict[str, list[str]] = {}
+        self._match_scores: dict[str, float] = {}
+        self._runtime_metadata["resolution_variant"] = (
+            f"{self.model_image_size} px instead of the native 240; text_features as "
+            "released, galleries rebuilt at this size from the matched reference images"
+        )
+        self._runtime_metadata["reference_set"] = (
+            "the checkpoint's reference images, identified by matching its 240 px gallery"
+        )
+        self._runtime_metadata["gallery_match_min"] = GALLERY_MATCH_MIN
+
+    def runtime_metadata(self) -> dict[str, object]:
+        data = super().runtime_metadata()
+        data["reference_images"] = dict(sorted(self._matched.items()))
+        data["gallery_match_scores"] = dict(sorted(self._match_scores.items()))
+        return data
+
+    def _features(self, model, paths: Sequence[Path]) -> tuple[torch.Tensor, torch.Tensor]:
+        """train_cls.fit's encoding: the two patch-feature maps of each image."""
+
+        first, second = [], []
+        for start in range(0, len(paths), 16):
+            batch = torch.stack(
+                [_read_like_training(path, model.transform) for path in paths[start : start + 16]]
+            ).to(self.device)
+            _, _, map1, map2 = model.encode_image(batch)
+            first.append(map1.float())
+            second.append(map2.float())
+        return torch.cat(first), torch.cat(second)
+
+    def _rebuild(self, category: str) -> None:
+        """Both tasks' galleries of one class at this size."""
+
+        candidates = [sample.image_path for sample in self._reference.candidates(category)]
+        with torch.no_grad():
+            native, _ = self._features(self._native, candidates)
+            native = torch.nn.functional.normalize(native, dim=-1)
+            for task in TASKS:
+                path = resolve_checkpoint(
+                    self.target_dataset, self.k_shot, category, task, seed=self.seed,
+                    checkpoint_root=self._checkpoint_root, download_root=self._download_root,
+                )
+                self._checkpoints[(category, task)] = path
+                state = torch.load(str(path), map_location=self.device)
+                missing = sorted(set(CHECKPOINT_KEYS) - set(state))
+                if missing:
+                    raise ValueError(f"PromptAD checkpoint {path.name} is missing {missing}")
+                stored = state["feature_gallery1"].float()
+                stored = torch.nn.functional.normalize(
+                    stored.view(self.k_shot, -1, stored.shape[-1]), dim=-1
+                )
+                if stored.shape[1:] != native.shape[1:]:
+                    raise ValueError(
+                        f"{path.name}: gallery of {tuple(stored.shape)} does not fit 240 px "
+                        f"features of {tuple(native.shape[1:])}"
+                    )
+                # Mean patch cosine between each stored image and each candidate.
+                similarity = torch.einsum("knd,cnd->kc", stored, native) / stored.shape[1]
+                score, picked = similarity.max(dim=1)
+                if float(score.min()) < GALLERY_MATCH_MIN or len(set(picked.tolist())) != self.k_shot:
+                    raise ValueError(
+                        f"{path.name}: the stored reference images were not found among the "
+                        f"{len(candidates)} normal training images of {category} "
+                        f"(best similarities {score.tolist()})"
+                    )
+                chosen = [candidates[index] for index in picked.tolist()]
+                self._matched[f"{category}/{task}"] = [Path(item).name for item in chosen]
+                self._match_scores[f"{category}/{task}"] = float(score.min())
+                first, second = self._features(self._model, chosen)
+                self._galleries[(category, task)] = (
+                    state["text_features"],
+                    torch.nn.functional.normalize(first.reshape(-1, first.shape[-1]), dim=-1),
+                    torch.nn.functional.normalize(second.reshape(-1, second.shape[-1]), dim=-1),
+                )
+
+    def _load(self, category: str, task: str) -> None:
+        """The released text features with galleries rebuilt at this size."""
+
+        if self._loaded == (category, task):
+            return
+        if (category, task) not in self._galleries:
+            self._rebuild(category)
+        text, first, second = self._galleries[(category, task)]
+        self._model.text_features.copy_(text)
+        self._model.feature_gallery1.copy_(first)
+        self._model.feature_gallery2.copy_(second)
+        self._loaded = (category, task)
+
+    def close(self) -> None:
+        self._native = None
+        self._galleries.clear()
+        super().close()

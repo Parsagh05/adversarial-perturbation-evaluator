@@ -79,8 +79,9 @@ def test_regime_matches_the_declared_few_shot_set():
     for name in ZERO_SHOT:
         assert base.regime(name) == "zero_shot", name
     # Aliases must land in the same tree as the name they alias, or the same
-    # model would write into both regimes depending on how it was spelled.
-    squash = lambda value: value.replace("-", "").replace("_", "")
+    # model would write into both regimes depending on how it was spelled. A
+    # trailing _<size> marks a model run at another input size (promptad_512).
+    squash = lambda value: re.sub(r"_\d+$", "", value).replace("-", "").replace("_", "")
     few_shot = {squash(name) for name in FEW_SHOT}
     for name in base.adapter_names():
         expected = "few_shot" if squash(name) in few_shot else "zero_shot"

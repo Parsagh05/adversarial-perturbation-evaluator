@@ -27,6 +27,7 @@ SHOT_VALUES = (4,)
 # soft_prompt_last.pt is the final epoch, without that selection.
 CHECKPOINTS = ("best", "last")
 MODEL_IMAGE_SIZE = 224
+PATCH_SIZE = 14
 FEATURES = (6, 12, 18, 24)
 DPAM_LAYER = 20
 SIGMA = 4
@@ -140,6 +141,7 @@ class IIPADAdapter(ModelAdapter):
         blip_model: str = "Salesforce/blipdiffusion",
         device: str = "cuda",
         image_size: int = 518,
+        model_image_size: int = MODEL_IMAGE_SIZE,
         seed: int = 4,
     ) -> None:
         target = target_dataset.strip().lower()
@@ -147,8 +149,14 @@ class IIPADAdapter(ModelAdapter):
             raise ValueError("IIPAD target_dataset must be 'mvtec' or 'visa'")
         if int(k_shot) not in SHOT_VALUES:
             raise ValueError(f"The trained IIPAD soft prompts cover k_shot in {SHOT_VALUES}")
+        if int(model_image_size) % PATCH_SIZE:
+            raise ValueError(f"IIPAD model_image_size must be a multiple of {PATCH_SIZE}")
         self.device = torch.device(device)
         self.image_size = int(image_size)
+        self.model_image_size = int(model_image_size)
+        self._grid = self.model_image_size // PATCH_SIZE
+        # main.py blurs the 224 map with sigma 4; the same blur relative to the image.
+        self._sigma = SIGMA * self.model_image_size / MODEL_IMAGE_SIZE
         self.k_shot = int(k_shot)
         self.target = target
         torch.manual_seed(int(seed))
@@ -169,6 +177,7 @@ class IIPADAdapter(ModelAdapter):
         self._padding = tokenizer("").to(self.device)
         self._blip = BlipDiffusionPipeline.from_pretrained(blip_model, torch_dtype=torch.float32)
         self._blip.qformer.to(self.device)
+        self._prepare_qformer()
 
         checkpoint_path = resolve_checkpoint(
             target, checkpoint, checkpoint_root=checkpoint_root, download_root=download_root
@@ -195,7 +204,7 @@ class IIPADAdapter(ModelAdapter):
             "official_entrypoint_defaults": "IIPAD main.py (test.sh: 224 px, depth 9, n_ctx 12, t_n_ctx 4)",
             "target_dataset": target,
             "backbone": "ViT-L-14 (openai), VV-attention / DPAM from layer 20",
-            "model_image_size": MODEL_IMAGE_SIZE,
+            "model_image_size": self.model_image_size,
             "features": list(FEATURES),
             "k_shot": self.k_shot,
             "blip_model": blip_model,
@@ -206,8 +215,23 @@ class IIPADAdapter(ModelAdapter):
             "memory": "one-for-all: k shots of every class, k most query-similar retrieved per image",
             "soft_prompt_mode": "eval (upstream leaves dropout on at test time)",
             "official_gaussian_sigma": SIGMA,
+            "gaussian_sigma_at_model_size": self._sigma,
             "seed": int(seed),
         }
+
+    def _prepare_qformer(self) -> None:
+        """Hook for a subclass that runs the Q-Former at another size."""
+
+    def _blip_pixels(self, image) -> torch.Tensor:
+        """main.py's BLIP preprocessing of a reference image."""
+
+        options = {}
+        if self.model_image_size != MODEL_IMAGE_SIZE:
+            options["size"] = {"height": self.model_image_size, "width": self.model_image_size}
+        return self._blip.image_processor.preprocess(
+            image, image_mean=self._blip.config.mean, image_std=self._blip.config.std,
+            return_tensors="pt", **options,
+        )["pixel_values"].to(self.device)
 
     def _build_memory(self, reference: NormalReference, load_image) -> None:
         """The memory-bank block of main.py, over every class of the target."""
@@ -218,10 +242,7 @@ class IIPADAdapter(ModelAdapter):
             samples = [candidates[i] for i in shot_positions(self.k_shot)]
             self._selection[category] = NormalReference.describe(samples)
             for sample in samples:
-                image = self._blip.image_processor.preprocess(
-                    load_image(str(sample.image_path)), image_mean=self._blip.config.mean,
-                    image_std=self._blip.config.std, return_tensors="pt",
-                )["pixel_values"].to(self.device)
+                image = self._blip_pixels(load_image(str(sample.image_path)))
                 query = self._blip.get_query_embeddings(image, ["object"] * 10).mean(dim=0).unsqueeze(dim=0)
                 embedding, _, memory_tokens = self._model.encode_image(
                     image, list(FEATURES), DPAM_layer=DPAM_LAYER, ffn=False
@@ -283,7 +304,7 @@ class IIPADAdapter(ModelAdapter):
         for patch in patches:
             patch = patch / patch.norm(dim=-1, keepdim=True)
             similarity, _ = self._vvclip.compute_similarity(patch, current.T)
-            similarity = similarity[:, 1:, :].reshape(similarity.shape[0], 16, 16, -1)
+            similarity = similarity[:, 1:, :].reshape(similarity.shape[0], self._grid, self._grid, -1)
             text_maps.append((similarity[..., 1] + 1 - similarity[..., 0]) / 2.0)
         token_1 = memory_tokens[0][0][1:]
         token_2 = memory_tokens[2][0][1:]
@@ -291,26 +312,28 @@ class IIPADAdapter(ModelAdapter):
         token_2 = token_2 / token_2.norm(dim=-1, keepdim=True)
         score_1 = (1.0 - token_1 @ bank_1.t()).min(dim=-1)[0] / 2.0
         score_2 = (1.0 - token_2 @ bank_2.t()).min(dim=-1)[0] / 2.0
-        visual = (score_1 + score_2).reshape(1, 1, 16, 16)
-        textual = (torch.stack(text_maps).sum(dim=0) / 4.0).reshape(1, 1, 16, 16)
+        visual = (score_1 + score_2).reshape(1, 1, self._grid, self._grid)
+        textual = (torch.stack(text_maps).sum(dim=0) / 4.0).reshape(1, 1, self._grid, self._grid)
 
         score = -probs[0] - query_sim[picked].mean(dim=0) + torch.max(textual) + torch.max(visual)
         anomaly_map = F.interpolate(
-            textual + visual, size=(MODEL_IMAGE_SIZE, MODEL_IMAGE_SIZE), mode="bilinear", align_corners=False
+            textual + visual, size=(self.model_image_size, self.model_image_size), mode="bilinear",
+            align_corners=False,
         )[0, 0]
-        return float(score), gaussian_filter(anomaly_map.float().cpu().numpy(), sigma=SIGMA)
+        return float(score), gaussian_filter(anomaly_map.float().cpu().numpy(), sigma=self._sigma)
 
     def predict(self, images: torch.Tensor, categories: Sequence[str]) -> tuple[np.ndarray, np.ndarray]:
         if len(images) != len(categories):
             raise ValueError("IIPAD received mismatched images and categories")
         # get_transform: bicubic resize to 224 and the OpenAI CLIP normalization.
+        size = self.model_image_size
         batch = F.interpolate(
-            images.to(self.device, dtype=torch.float32), size=(MODEL_IMAGE_SIZE, MODEL_IMAGE_SIZE),
+            images.to(self.device, dtype=torch.float32), size=(size, size),
             mode="bicubic", align_corners=False, antialias=True,
         ).clamp(0, 1)
         batch = (batch - self._mean) / self._std
         scores = np.empty(len(batch), dtype=np.float32)
-        maps = np.empty((len(batch), MODEL_IMAGE_SIZE, MODEL_IMAGE_SIZE), dtype=np.float32)
+        maps = np.empty((len(batch), size, size), dtype=np.float32)
         with torch.no_grad():
             for index in range(len(batch)):
                 scores[index], maps[index] = self._score(batch[index : index + 1])
@@ -322,3 +345,62 @@ class IIPADAdapter(ModelAdapter):
         self._blip = None
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
+
+
+def resize_vision_positions(embeddings: torch.nn.Module, image_size: int) -> int:
+    """Resize a BLIP-2 vision tower's position embeddings to ``image_size``.
+
+    diffusers' ``Blip2VisionEmbeddings`` adds ``position_embedding[:, :N]`` and
+    cannot grow it, so the patch grid is interpolated once, bicubically as
+    open_clip's ``resize_pos_embed`` does, with the class position kept. Returns
+    the new grid side.
+    """
+
+    patch = int(embeddings.patch_size)
+    if image_size % patch:
+        raise ValueError(f"BLIP image size {image_size} is not a multiple of its {patch}-pixel patch")
+    old = embeddings.position_embedding.data
+    old_grid = int(round((old.shape[1] - 1) ** 0.5))
+    new_grid = image_size // patch
+    if new_grid != old_grid:
+        grid = old[:, 1:].reshape(1, old_grid, old_grid, -1).permute(0, 3, 1, 2).float()
+        grid = F.interpolate(grid, size=(new_grid, new_grid), mode="bicubic", align_corners=False)
+        grid = grid.permute(0, 2, 3, 1).reshape(1, new_grid * new_grid, -1).to(old.dtype)
+        embeddings.position_embedding = torch.nn.Parameter(
+            torch.cat([old[:, :1], grid], dim=1), requires_grad=False
+        )
+        embeddings.image_size = image_size
+        embeddings.num_patches = new_grid * new_grid
+        embeddings.num_positions = new_grid * new_grid + 1
+    return new_grid
+
+
+@register_adapter("iipad_518")
+class IIPAD518Adapter(IIPADAdapter):
+    """IIPAD run at 518 pixels instead of its native 224.
+
+    The perturbation is made at 518 pixels, so at 224 IIPAD downsamples it with
+    the image. 518 is 37 patches of 14, the same grid as the 518-pixel models:
+    VV-CLIP interpolates its position embeddings itself when the patch count
+    changes, and BLIP's Q-Former vision tower, which only runs at 224 in
+    diffusers, has its position embeddings resized here, so **no branch** sees a
+    downsampled perturbation. The normal-shot memory is built at the same size,
+    and the map's Gaussian blur scales with it (sigma 4 at 224 is 9.25 at 518) so
+    it covers the same share of the image. The soft prompt is used as trained;
+    it reads the image token and the query, neither of which depends on the
+    patch count.
+    """
+
+    name = "iipad_518"
+
+    # k_shot is spelled out: regime() reads the constructor's parameter names.
+    def __init__(self, *, k_shot: int = 4, model_image_size: int = 518, **kwargs: object) -> None:
+        super().__init__(k_shot=k_shot, model_image_size=model_image_size, **kwargs)
+        self._runtime_metadata["resolution_variant"] = (
+            f"{self.model_image_size} px instead of the native 224 in both branches: VV-CLIP "
+            "interpolates its own position embeddings, the Q-Former's are resized bicubically "
+            "at load; memory built at the same size"
+        )
+
+    def _prepare_qformer(self) -> None:
+        resize_vision_positions(self._blip.qformer.visual_encoder.embeddings, self.model_image_size)
