@@ -63,6 +63,18 @@ def test_blip_positions_are_untouched_at_the_native_size():
     assert torch.equal(embeddings.position_embedding.data, before)
 
 
+def test_anovl_512_softmax_matches_the_vendored_one_and_does_not_overflow():
+    from fpeval.adapters.anovl import stable_softmax
+
+    vendored = lambda x: x.exp() / x.exp().sum(dim=-1, keepdim=True)
+    small = torch.randn(4, 32) * 5
+    assert torch.allclose(stable_softmax(small), vendored(small), atol=1e-6)
+    large = small + 100.0  # exp overflows to inf in float32
+    assert torch.isnan(vendored(large)).any()
+    assert torch.isfinite(stable_softmax(large)).all()
+    assert torch.allclose(stable_softmax(large), stable_softmax(small), atol=1e-6)
+
+
 def test_blip_positions_reject_a_size_off_the_patch_grid():
     with pytest.raises(ValueError, match="multiple"):
         resize_vision_positions(_Embeddings(grid=16), 512)

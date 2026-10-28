@@ -437,7 +437,25 @@ class AnoVL512Adapter(AnoVLAdapter):
 
     def __init__(self, *, model_image_size: int = 512, **kwargs: object) -> None:
         super().__init__(model_image_size=model_image_size, **kwargs)
+        # The vendored attention computes softmax as exp(x) / sum(exp(x)), which
+        # overflows to inf/inf = NaN once a logit passes ~88; with 4.5x the
+        # tokens of 240 px that happens on some images. The stable form is
+        # identical wherever the original is finite.
+        transformer = sys.modules["open_clip.transformer"]
+        root = str(Path(kwargs["repository"]).expanduser().resolve())
+        if not str(getattr(transformer, "__file__", "")).startswith(root):
+            raise RuntimeError("AnoVL's open_clip.transformer is not the one from its repository")
+        transformer.softmax = stable_softmax
         self._runtime_metadata["resolution_variant"] = (
             f"{self.model_image_size} px instead of the native 240; position embeddings "
             "resized by the official open_clip load_checkpoint"
         )
+        self._runtime_metadata["attention_softmax"] = (
+            "max-subtracted (torch.softmax) instead of the vendored exp/sum, which overflows at 512 px"
+        )
+
+
+def stable_softmax(x: torch.Tensor) -> torch.Tensor:
+    """open_clip/transformer.softmax of AnoVL, without its overflow."""
+
+    return torch.softmax(x, dim=-1)
