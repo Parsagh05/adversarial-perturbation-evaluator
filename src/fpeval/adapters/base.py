@@ -15,6 +15,10 @@ class ModelAdapter(ABC):
     """Accept shared RGB tensors in ``[0, 1]`` and return anomaly outputs."""
 
     name: str
+    # A transductive model scores a cohort as one set: what it says about an
+    # image depends on the other images scored with it (MuSc, RareCLIP, PILOT).
+    # The engine then calls predict_set on whole cohorts instead of predict.
+    transductive: bool = False
 
     def runtime_metadata(self) -> dict[str, object]:
         """Return resolved model settings recorded with evaluation outputs."""
@@ -26,6 +30,17 @@ class ModelAdapter(ABC):
         self, images: torch.Tensor, categories: Sequence[str]
     ) -> tuple[np.ndarray, np.ndarray]:
         """Return image scores ``[B]`` and low-resolution maps ``[B,H,W]``."""
+
+    def predict_set(
+        self, images: Sequence[torch.Tensor], categories: Sequence[str]
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Score a whole cohort as one set; transductive adapters only.
+
+        ``images`` is indexable and loads each ``[3,S,S]`` image on access, so a
+        large cohort never has to sit in memory at once.
+        """
+
+        raise NotImplementedError(f"{self.name} is not transductive")
 
     def postprocess_image_scores(
         self,

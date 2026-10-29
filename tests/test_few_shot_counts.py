@@ -83,6 +83,8 @@ def test_regime_matches_the_declared_few_shot_set():
     # trailing _<size> marks a model run at another input size (promptad_512).
     squash = lambda value: re.sub(r"_\d+$", "", value).replace("-", "").replace("_", "")
     few_shot = {squash(name) for name in FEW_SHOT}
+    # Few-shot adapters run on the server only, without a Kaggle notebook.
+    few_shot |= {squash(name) for name in ("multiads_fewshot",)}
     for name in base.adapter_names():
         expected = "few_shot" if squash(name) in few_shot else "zero_shot"
         assert base.regime(name) == expected, name

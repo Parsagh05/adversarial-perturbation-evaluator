@@ -1,0 +1,39 @@
+{
+  "attacks_root": "/path/to/perturbations",
+  "output_root": "/path/to/results",
+  "model": "pilot",
+  "mvtec_root": "/path/to/mvtec_anomaly_detection",
+  "visa_root": "/path/to/VisA_20220922",
+  "targets": [
+    "mvtec",
+    "visa"
+  ],
+  "scopes": [
+    "per_dataset",
+    "cross_dataset",
+    "per_category",
+    "per_image"
+  ],
+  "model_kwargs_by_target": {
+    "mvtec": {
+      "repository": "/path/to/PILOT",
+      "target_dataset": "mvtec",
+      "checkpoint": "/path/to/trained/pilot/train_on_visa/epoch_5.pth",
+      "tta_rounds": 4
+    },
+    "visa": {
+      "repository": "/path/to/PILOT",
+      "target_dataset": "visa",
+      "checkpoint": "/path/to/trained/pilot/train_on_mvtec/epoch_5.pth",
+      "tta_rounds": 4
+    }
+  },
+  "device": "cuda",
+  "batch_size": 1,
+  "image_size": 518,
+  "gaussian_sigma": 0.0,
+  "max_sample_conditions": 25,
+  "qualitative_threshold_modes": [
+    "clean_pixel_f1"
+  ]
+}

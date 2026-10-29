@@ -29,5 +29,9 @@ from . import kagprompt as _kagprompt  # noqa: F401
 from . import promptad as _promptad  # noqa: F401
 from . import rempad as _rempad  # noqa: F401
 from . import iipad as _iipad  # noqa: F401
+from . import multiads as _multiads  # noqa: F401
+from . import musc as _musc  # noqa: F401
+from . import rareclip as _rareclip  # noqa: F401
+from . import pilot as _pilot  # noqa: F401
 
 __all__ = ["ModelAdapter", "adapter_names", "create_adapter", "regime", "register_adapter"]

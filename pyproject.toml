@@ -447,6 +447,42 @@ mrad_ft = [
   "thop>=0.1",
   "torchvision>=0.15",
 ]
+multiads = [
+  # No released weights: train_pipeline/train_multiads.sh trains them.
+  "ftfy>=6.0",
+  "regex>=2023.0",
+  "torchvision>=0.15",
+]
+musc = [
+  # Training-free; models/backbone/open_clip/transformer.py imports cv2.
+  "ftfy>=6.0",
+  "opencv-python>=4.8",
+  "regex>=2023.0",
+  "torchvision>=0.15",
+]
+rareclip = [
+  # Weights ship in the repository under weights/.
+  "ftfy>=6.0",
+  "regex>=2023.0",
+  "torchvision>=0.15",
+]
+pilot = [
+  # No released weights: train_pipeline/train_pilot.sh trains them. tta.py
+  # imports transformers, matplotlib and tabulate; prompt_ensemble.py entmax
+  # and pkg_resources (gone in setuptools 81); metrics.py skimage.
+  "entmax>=1.1",
+  "ftfy>=6.0",
+  "matplotlib>=3.6",
+  "regex>=2023.0",
+  "scikit-image>=0.20",
+  "scikit-learn>=1.2",
+  "scipy>=1.10",
+  "setuptools<81",
+  "tabulate>=0.9",
+  "thop>=0.1",
+  "torchvision>=0.15",
+  "transformers>=4.30",
+]
 
 [project.scripts]
 fpeval = "fpeval.cli:main"

@@ -97,6 +97,63 @@ def _predict_attacked(
     return predictions, distances
 
 
+class _CohortImages:
+    """A cohort's images, loaded on access, with any perturbations applied."""
+
+    def __init__(
+        self, samples: list[Sample], image_size: int,
+        perturbations: dict[str, torch.Tensor] | None = None,
+    ) -> None:
+        self._samples = samples
+        self._image_size = image_size
+        self._perturbations = perturbations or {}
+        self.linf: dict[str, float] = {}
+
+    def __len__(self) -> int:
+        return len(self._samples)
+
+    def __getitem__(self, index: int) -> torch.Tensor:
+        sample = self._samples[index]
+        clean = load_image(sample, self._image_size)
+        delta = self._perturbations.get(sample.protocol_id)
+        if delta is None:
+            return clean
+        adversarial = (clean + delta).clamp(0, 1)
+        self.linf[sample.protocol_id] = float((adversarial - clean).abs().max())
+        return adversarial
+
+
+def _predict_set(
+    adapter: Any,
+    samples: list[Sample],
+    config: EvaluationConfig,
+    perturbations: dict[str, torch.Tensor] | None = None,
+) -> tuple[dict[str, Prediction], dict[str, float]]:
+    """Score a cohort as one set, the perturbed images in place of their originals.
+
+    A transductive model's output for every image depends on the rest of the
+    set, so an attack reaches the unattacked images too and the whole cohort
+    is scored again rather than only the attacked part.
+    """
+    images = _CohortImages(samples, config.image_size, perturbations)
+    scores, maps = adapter.predict_set(images, [sample.category for sample in samples])
+    if np.shape(scores) != (len(samples),) or len(maps) != len(samples):
+        raise ValueError("Adapter returned an invalid set shape")
+    predictions: dict[str, Prediction] = {}
+    for sample, score, anomaly_map in zip(samples, scores, maps):
+        array = np.asarray(anomaly_map, dtype=np.float32)
+        if array.ndim != 2 or not np.isfinite(array).all() or not np.isfinite(score):
+            raise ValueError("Adapter predictions must be finite [B] and [B,H,W]")
+        predictions[sample.protocol_id] = (float(score), array)
+    return predictions, {sample.protocol_id: images.linf.get(sample.protocol_id, 0.0) for sample in samples}
+
+
+def _perturbations(attack: Attack, config: EvaluationConfig) -> dict[str, torch.Tensor]:
+    """Each attacked image of a condition mapped to the delta it receives."""
+    delta, delta_index = attack.load(verify_checksum=config.verify_checksums)
+    return {sample_id: delta[delta_index[sample_id]] for sample_id in attack.attacked_ids}
+
+
 def _resize_maps(maps: Sequence[np.ndarray], size: int, sigma: float) -> np.ndarray:
     tensor = torch.from_numpy(np.stack(maps).astype(np.float32))[:, None]
     output = F.interpolate(tensor, size=(size, size), mode="bilinear", align_corners=False)[:, 0].numpy()
@@ -467,9 +524,16 @@ def _evaluate_condition(
     attacked_set = set(attacked_ids)
     attacked_samples = [sample for sample in cohort if sample.protocol_id in attacked_set]
     delta, delta_index = attack.load(verify_checksum=config.verify_checksums)
-    adversarial_only, linf = _predict_attacked(
-        adapter, attacked_samples, delta, delta_index, config
-    )
+    if getattr(adapter, "transductive", False):
+        # raw_clean_cache is this cohort's own clean set prediction here.
+        adversarial_only, linf = _predict_set(
+            adapter, cohort, config,
+            {sample_id: delta[delta_index[sample_id]] for sample_id in attacked_ids},
+        )
+    else:
+        adversarial_only, linf = _predict_attacked(
+            adapter, attacked_samples, delta, delta_index, config
+        )
     # The raw attacked predictions, kept by the caller to build V2.
     if raw_out is not None:
         raw_out.update(adversarial_only)
@@ -882,6 +946,9 @@ def _evaluate_bidirectional(
     any attacked cohort is, so no model is run again. The per-image outputs are
     those of the two V1 conditions (identical unless an adapter normalises over
     the attacked cohort itself), so V2 writes cohort-level rows only.
+
+    A transductive model is the exception: each half changes how the other is
+    scored, so the cohort is predicted once more with both deltas in place.
     """
     if n2a.evaluation_ids != a2n.evaluation_ids:
         raise ValueError(f"V2 pair has different cohorts: {n2a.condition_id}")
@@ -889,6 +956,11 @@ def _evaluate_bidirectional(
     if n2a_ids & a2n_ids:
         raise ValueError(f"V2 pair attacks the same image twice: {n2a.condition_id}")
     cohort = [samples_by_id[sample_id] for sample_id in n2a.evaluation_ids]
+    if getattr(adapter, "transductive", False):
+        raw_attacked, _ = _predict_set(
+            adapter, cohort, config,
+            {**_perturbations(n2a, config), **_perturbations(a2n, config)},
+        )
     clean_metric_cache = clean_metrics.setdefault(
         tuple(sample.protocol_id for sample in cohort), {}
     )
@@ -1185,10 +1257,39 @@ def _run_conditions(
             model_settings["shared_gaussian_sigma"] = config.gaussian_sigma
             resolved_model_settings[target] = model_settings
             record.resolved(resolved_model_settings)
-            raw_clean = _predict_clean(adapter, fixed_samples, config)
+            transductive = getattr(adapter, "transductive", False)
+            if transductive and config.evaluate_attack_train and not config.clean_only:
+                raise ValueError(
+                    f"{config.model} is transductive; evaluate_attack_train is not supported"
+                )
+            if transductive:
+                raw_clean, _ = _predict_set(adapter, fixed_samples, config)
+            else:
+                raw_clean = _predict_clean(adapter, fixed_samples, config)
             clean = _postprocess_predictions(adapter, fixed_samples, raw_clean)
             thresholds = _calibrate_clean(target, calibration_samples, clean, config)
             clean_metrics: dict[tuple[str, ...], dict[str, dict[str, float]]] = {}
+            # A transductive model's clean output depends on the set it is
+            # scored in, so each cohort gets its own clean prediction and its
+            # own thresholds, computed once and reused by every condition on it.
+            clean_sets: dict[tuple[str, ...], tuple[dict[str, Prediction], dict[str, dict[str, float]]]] = {
+                tuple(sample.protocol_id for sample in fixed_samples): (raw_clean, thresholds),
+            }
+
+            def cohort_clean(attack: Attack) -> tuple[dict[str, Prediction], dict[str, dict[str, float]]]:
+                if not transductive:
+                    return raw_clean, thresholds
+                if attack.evaluation_ids not in clean_sets:
+                    cohort = [indexed[sample_id] for sample_id in attack.evaluation_ids]
+                    raw, _ = _predict_set(adapter, cohort, config)
+                    clean_sets[attack.evaluation_ids] = (
+                        raw,
+                        _calibrate_clean(
+                            target, cohort, _postprocess_predictions(adapter, cohort, raw), config
+                        ),
+                    )
+                return clean_sets[attack.evaluation_ids]
+
             threshold_payload["targets"][target] = thresholds
             if config.clean_only:
                 summary, categories, images = _clean_only_rows(
@@ -1209,8 +1310,9 @@ def _run_conditions(
                 raw_attacked: dict[str, Prediction] | None = (
                     {} if config.evaluate_bidirectional else None
                 )
+                attack_clean, attack_thresholds = cohort_clean(attack)
                 summary, categories, images, predictions, delta, delta_index = _evaluate_condition(
-                    attack, indexed, raw_clean, adapter, thresholds, config,
+                    attack, indexed, attack_clean, adapter, attack_thresholds, config,
                     clean_metrics=clean_metrics, raw_out=raw_attacked,
                 )
                 all_summary.extend(summary)
@@ -1228,7 +1330,8 @@ def _run_conditions(
                             by_direction["normal_to_abnormal"],
                             by_direction["abnormal_to_normal"],
                             {**partner[1], **raw_attacked},
-                            indexed, raw_clean, adapter, thresholds, config, clean_metrics,
+                            indexed, attack_clean, adapter, attack_thresholds, config,
+                            clean_metrics,
                         )
                         v2_summary.extend(pair_summary)
                         v2_categories.extend(pair_categories)
