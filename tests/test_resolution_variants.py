@@ -102,3 +102,16 @@ def test_winclip_matrix_aggregation_matches_the_official_loop():
 def test_blip_positions_reject_a_size_off_the_patch_grid():
     with pytest.raises(ValueError, match="multiple"):
         resize_vision_positions(_Embeddings(grid=16), 512)
+
+
+def test_kagprompt_max_cosine_matches_the_official_broadcast():
+    from fpeval.adapters.kagprompt import max_cosine
+
+    torch.manual_seed(0)
+    query, normal = torch.randn(49, 1280), torch.randn(196, 1280)
+    official, _ = torch.max(
+        torch.nn.functional.cosine_similarity(query[:, None], normal[None], dim=2), dim=1
+    )
+    assert torch.allclose(max_cosine(query, normal), official, atol=1e-5)
+    # Half precision tokens, as the model hands them over, are compared in float32.
+    assert max_cosine(query.half(), normal.half()).dtype == torch.float32

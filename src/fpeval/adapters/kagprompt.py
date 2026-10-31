@@ -487,6 +487,19 @@ class KAGPromptAdapter(ModelAdapter):
             torch.cuda.empty_cache()
 
 
+def max_cosine(query: torch.Tensor, normal: torch.Tensor) -> torch.Tensor:
+    """For each query patch [L, C], its highest cosine to any reference patch [N, C].
+
+    The official ``F.cosine_similarity(query[:, None], normal[None], dim=2)``
+    materialises an [L, N, C] tensor: 1369 x 5476 x 1280 floats, 36 GiB, at 518
+    with four shots. A product of unit vectors gives the same cosines as [L, N].
+    """
+
+    query = torch.nn.functional.normalize(query.float(), dim=-1)
+    normal = torch.nn.functional.normalize(normal.float(), dim=-1)
+    return (query @ normal.T).max(dim=1).values
+
+
 @register_adapter("kagprompt_518")
 class KAGPrompt518Adapter(KAGPromptAdapter):
     """KAG-Prompt run at 518 pixels instead of its native 224.
@@ -499,7 +512,8 @@ class KAGPrompt518Adapter(KAGPromptAdapter):
     grid, 256 tokens, maps upsampled to 224), so ``_generate`` is that function
     with the grid read off the tokens and the maps at the model size; every
     other line, including the dead ``'mvtec' in 'normal_img_paths'`` branch,
-    is the official one.
+    is the official one, except that the query-to-reference cosine is
+    ``max_cosine`` (the official broadcast needs 36 GiB at 518).
     """
 
     name = "kagprompt_518"
@@ -559,10 +573,10 @@ class KAGPrompt518Adapter(KAGPromptAdapter):
             normal_patch_tokens, _ = model.encode_image_for_one_shot(inputs["normal_img_paths"])
             sims = []
             for i in range(len(query_patch_tokens)):
-                query = query_patch_tokens[i].reshape(-1, 1, 1280)
-                normal = normal_patch_tokens[i].reshape(1, -1, 1280)
-                sim_max, _ = torch.max(F.cosine_similarity(query, normal, dim=2), dim=1)
-                sims.append(sim_max)
+                sims.append(max_cosine(
+                    query_patch_tokens[i].reshape(-1, 1280),
+                    normal_patch_tokens[i].reshape(-1, 1280),
+                ))
             sim = torch.mean(torch.stack(sims, dim=0), dim=0).reshape(1, 1, side, side)
             sim = F.interpolate(sim, size=size, mode="bilinear", align_corners=True)
             anomaly_map = torch.softmax(torch.cat([sim, 1 - sim], dim=1), dim=1)
