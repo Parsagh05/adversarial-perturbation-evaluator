@@ -601,22 +601,26 @@ class UniVADAdapter(ModelAdapter):
             torch.cuda.empty_cache()
 
 
-@register_adapter("univad_518")
-class UniVAD518Adapter(UniVADAdapter):
-    """UniVAD run at 518 pixels instead of its native 448.
+@register_adapter("univad_560")
+class UniVAD560Adapter(UniVADAdapter):
+    """UniVAD run at 560 pixels instead of its native 448.
 
     The perturbation is made at 518 pixels, so at 448 UniVAD downsamples it with
-    the image. 518 is 37 patches of 14 for both of its ViT-14 backbones:
-    ``UniVAD(image_size=...)`` derives every grid from the size, its CLIP
-    factory resizes the position embeddings and DINOv2 interpolates its own.
-    The method is training-free, and component segmentation runs at the same
-    size.
+    the image. UniVAD's sizes must tile three patch grids: 14 for CLIP ViT-L/14
+    and DINOv2-giant, and 8 for the DINO ViT-S/8 that makes the MULTI-gate
+    clustering heatmaps (modules.DinoFeaturizer asserts it). 518 is not a
+    multiple of 8, so the nearest size that is a multiple of both and keeps the
+    whole perturbation is 560 (40 x 14, 70 x 8); the 518 image is upsampled to
+    it, losing nothing. ``UniVAD(image_size=...)`` derives every grid from the
+    size, its CLIP factory resizes the position embeddings and both DINOs
+    interpolate their own. The method is training-free, and component
+    segmentation runs at the same size.
     """
 
-    name = "univad_518"
+    name = "univad_560"
 
     # k_shot is spelled out: regime() reads the constructor's parameter names.
-    def __init__(self, *, k_shot: int = 1, model_image_size: int = 518, **kwargs: object) -> None:
+    def __init__(self, *, k_shot: int = 1, model_image_size: int = 560, **kwargs: object) -> None:
         super().__init__(k_shot=k_shot, model_image_size=model_image_size, **kwargs)
         self._runtime_metadata["resolution_variant"] = (
             f"{self.model_image_size} px instead of the native 448; UniVAD derives its grids "

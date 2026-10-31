@@ -1,7 +1,7 @@
 {
   "attacks_root": "/path/to/perturbations",
   "output_root": "/path/to/results",
-  "model": "univad_518",
+  "model": "univad_560",
   "mvtec_root": "/path/to/mvtec_anomaly_detection",
   "visa_root": "/path/to/VisA_20220922",
   "targets": [

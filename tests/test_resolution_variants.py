@@ -16,7 +16,7 @@ VARIANTS = {
     "promptad_512": ("promptad", "model_image_size", 512),
     "iipad_518": ("iipad", "model_image_size", 518),
     "dictas_518": ("dictas", "model_image_size", 518),
-    "univad_518": ("univad", "model_image_size", 518),
+    "univad_560": ("univad", "model_image_size", 560),
     "kagprompt_518": ("kagprompt", "model_image_size", 518),
     "inctrl_512": ("inctrl", "model_image_size", 512),
     "fade_512": ("fade", "classification_img_size", 512),
@@ -43,9 +43,22 @@ def test_variant_defaults_to_its_size_and_ships_a_config(name):
     assert config["gaussian_sigma"] == native_config["gaussian_sigma"]
 
 
-def test_variant_sizes_tile_their_patches():
-    # 16-pixel patches for the ViT-B/16+ models, 14 for IIPAD's ViT-L/14.
-    assert 512 % 16 == 0 and 518 % 14 == 0
+# Every patch size a variant's networks need its input to tile.
+PATCHES = {
+    "anovl_512": (16,), "promptad_512": (16,), "inctrl_512": (16,),
+    "fade_512": (16,), "winclip_accurate_512": (16,),
+    "iipad_518": (14,), "dictas_518": (14,), "kagprompt_518": (14,),
+    # CLIP ViT-L/14 and DINOv2 at 14, the clustering DINO ViT-S/8 at 8.
+    "univad_560": (14, 8),
+}
+
+
+@pytest.mark.parametrize("name", sorted(VARIANTS))
+def test_variant_sizes_tile_all_their_patches(name):
+    size = VARIANTS[name][2]
+    assert all(size % patch == 0 for patch in PATCHES[name]), (name, size)
+    # None of them may shrink the 518-pixel perturbation by more than 512 does.
+    assert size >= 512
 
 
 class _Embeddings(torch.nn.Module):
