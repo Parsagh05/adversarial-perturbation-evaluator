@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+import contextlib
 import importlib
 import os
 from pathlib import Path
@@ -31,6 +32,30 @@ OFFICIAL_ARGS = dict(
     LS_ratio=0.01, Rs=1, Rs_freq=20, max_Rs_num=8, Rs_temp=200, text_temp=20,
     sigma=4, rare_thd=0.3, sampler="SCS", k_shot=0, other="",
 )
+
+
+@contextlib.contextmanager
+def _gpu_map_location(gpu: int):
+    """Load the checkpoint onto cuda:<gpu> despite rareclip.py's map_location.
+
+    rareclip.py loads with ``lambda storage, loc: storage.cuda(self.device)``
+    where self.device is a torch.device. Newer PyTorch (2.15) requires an int
+    index in Storage.cuda and raises TypeError. While the model is built, a
+    callable map_location is replaced by "cuda:<gpu>", which puts every tensor
+    on the same GPU, so the loaded weights are unchanged.
+    """
+    original = torch.load
+
+    def load(*args, **kwargs):
+        if gpu >= 0 and callable(kwargs.get("map_location")):
+            kwargs["map_location"] = f"cuda:{gpu}"
+        return original(*args, **kwargs)
+
+    torch.load = load
+    try:
+        yield
+    finally:
+        torch.load = original
 
 
 def _import_official_repository(repository: str | Path):
@@ -113,7 +138,8 @@ class RareCLIPAdapter(ModelAdapter):
         previous = os.getcwd()
         os.chdir(root)
         try:
-            self._model = module.RareCLIP(args)
+            with _gpu_map_location(gpu):
+                self._model = module.RareCLIP(args)
         finally:
             os.chdir(previous)
         self._mean = torch.tensor(CLIP_MEAN, device=self.device).view(1, 3, 1, 1)
