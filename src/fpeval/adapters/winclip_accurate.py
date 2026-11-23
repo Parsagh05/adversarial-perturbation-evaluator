@@ -495,11 +495,11 @@ class AccurateWinCLIPFewShotAdapter(AccurateWinCLIPAdapter):
         large_memory, mid_memory, patch_memory = self._category_memory(
             category, large_mask, mid_mask
         )
-        large = _harmonic_aggregation(
+        large = self._aggregate(
             (count, grid, grid), _few_shot_distance(large_memory, large_tokens),
             large_mask,
         )
-        mid = _harmonic_aggregation(
+        mid = self._aggregate(
             (count, grid, grid), _few_shot_distance(mid_memory, mid_tokens),
             mid_mask,
         )
@@ -549,8 +549,7 @@ def harmonic_aggregation_matrix(
     return (cover.sum(dim=1) / harmonic_sum).reshape(batch, height, width)
 
 
-@register_adapter("winclip_accurate_512")
-class AccurateWinCLIP512Adapter(AccurateWinCLIPAdapter):
+class _At512:
     """Accurate-WinCLIP run at 512 pixels instead of its native 240.
 
     The perturbation is made at 518 pixels, so at 240 WinCLIP downsamples it
@@ -562,8 +561,6 @@ class AccurateWinCLIP512Adapter(AccurateWinCLIPAdapter):
     share of the image; and the per-patch harmonic aggregation is computed as a
     matrix product with identical results. The method is training-free.
     """
-
-    name = "winclip_accurate_512"
 
     def __init__(self, *, repository: str, input_size: int = 512, **kwargs: object) -> None:
         module = _import_official_repository(repository)
@@ -589,3 +586,26 @@ class AccurateWinCLIP512Adapter(AccurateWinCLIPAdapter):
             "force_image_size; window kernels scaled with the image; harmonic "
             "aggregation as a matrix product"
         )
+
+
+@register_adapter("winclip_accurate_512")
+class AccurateWinCLIP512Adapter(_At512, AccurateWinCLIPAdapter):
+    __doc__ = _At512.__doc__
+    name = "winclip_accurate_512"
+
+
+@register_adapter("winclip_accurate_fewshot_512")
+class AccurateWinCLIPFewShot512Adapter(_At512, AccurateWinCLIPFewShotAdapter):
+    """Accurate-WinCLIP few-shot (``few_shot.sh``) at 512 pixels instead of 240.
+
+    The 512 changes of ``winclip_accurate_512`` (backbone size, scaled window
+    kernels, matrix aggregation) applied to the few-shot adapter. The k
+    references are drawn exactly as at 240 and resized to 512 like the test
+    images, so the memory holds 32x32-grid tokens from the same images.
+    """
+
+    name = "winclip_accurate_fewshot_512"
+
+    # regime() reads k_shot from this signature, so it is named here.
+    def __init__(self, *, k_shot: int = 1, input_size: int = 512, **kwargs: object) -> None:
+        super().__init__(k_shot=k_shot, input_size=input_size, **kwargs)

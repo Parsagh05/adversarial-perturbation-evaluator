@@ -21,6 +21,7 @@ VARIANTS = {
     "inctrl_512": ("inctrl", "model_image_size", 512),
     "fade_512": ("fade", "classification_img_size", 512),
     "winclip_accurate_512": ("winclip_accurate", "input_size", 512),
+    "winclip_accurate_fewshot_512": ("winclip_accurate_fewshot", "input_size", 512),
 }
 
 
@@ -46,7 +47,7 @@ def test_variant_defaults_to_its_size_and_ships_a_config(name):
 # Every patch size a variant's networks need its input to tile.
 PATCHES = {
     "anovl_512": (16,), "promptad_512": (16,), "inctrl_512": (16,),
-    "fade_512": (16,), "winclip_accurate_512": (16,),
+    "fade_512": (16,), "winclip_accurate_512": (16,), "winclip_accurate_fewshot_512": (16,),
     "iipad_518": (14,), "dictas_518": (14,), "kagprompt_518": (14,),
     # CLIP ViT-L/14 and DINOv2 at 14, the clustering DINO ViT-S/8 at 8.
     "univad_560": (14, 8),
