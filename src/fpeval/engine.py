@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, replace
 import csv
+import gc
 import json
 import math
 from pathlib import Path, PurePosixPath
@@ -1395,6 +1396,17 @@ def _run_conditions(
             v2_unpaired.extend(attack.condition_id for attack, _ in pending.values())
         finally:
             adapter.close()
+            # This target's rows are already in the lists above; its clean and
+            # attacked predictions are not needed again. Without this they stay
+            # referenced until the next target overwrites the names, i.e. after
+            # that target's own clean pass has been held as well.
+            adapter = raw_clean = clean = clean_metrics = clean_sets = None
+            cohort_clean = pending = raw_attacked = predictions = None
+            attack_clean = delta = delta_index = None
+            summary = categories = images = None
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
 
     if not all_summary:
         raise ValueError("No selected conditions had a configured target")
