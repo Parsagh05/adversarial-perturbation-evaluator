@@ -43,6 +43,11 @@ class EvaluationConfig:
     verify_checksums: bool = True
     extraction_cache: str | None = None
     save_predictions: bool = False
+    # Keep the anomaly maps held between steps in files on disk instead of in
+    # memory. Execution only: the same float32 values are read back, so no
+    # result changes. Meant for models whose full-size maps do not fit next to
+    # the model (WinCLIP at 512, UniVAD at 560 on a 28 GB unified-memory GPU).
+    maps_on_disk: bool = False
     save_qualitative_samples: bool = True
     max_sample_conditions: int | None = None
     qualitative_threshold_modes: tuple[str, ...] | None = None

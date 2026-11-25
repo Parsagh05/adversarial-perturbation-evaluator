@@ -7,6 +7,9 @@ import csv
 import gc
 import json
 import math
+import os
+import tempfile
+import uuid
 from pathlib import Path, PurePosixPath
 from collections import defaultdict
 from collections.abc import Iterable, Sequence
@@ -53,6 +56,50 @@ from .structured import (
 
 Prediction = tuple[float, np.ndarray]
 
+# Folder the current target's maps are spilled to under maps_on_disk; None
+# keeps them in memory. Set and cleared by _run_conditions per target.
+_MAP_DIR: Path | None = None
+
+
+def _spill_maps(maps: np.ndarray | Sequence[np.ndarray]) -> list[np.ndarray]:
+    """Rows of ``maps`` backed by a file in _MAP_DIR instead of memory.
+
+    The values are written and read back as float32 unchanged. On POSIX the
+    file is unlinked at once, so its disk space is freed as soon as the last
+    row referencing it is dropped; elsewhere it waits for the target's folder
+    to be removed.
+    """
+    if _MAP_DIR is None or len(maps) == 0:
+        return list(maps)
+    first = np.asarray(maps[0])
+    if any(np.shape(item) != first.shape for item in maps):
+        return list(maps)
+    path = _MAP_DIR / f"{uuid.uuid4().hex}.npy"
+    stored = np.lib.format.open_memmap(
+        path, mode="w+", dtype=np.float32, shape=(len(maps), *first.shape)
+    )
+    for index, item in enumerate(maps):
+        stored[index] = item
+    stored.flush()
+    del stored
+    view = np.load(path, mmap_mode="r")
+    try:
+        os.remove(path)
+    except OSError:
+        pass
+    return list(view)
+
+
+def _spill_predictions(predictions: dict[str, Prediction]) -> dict[str, Prediction]:
+    if _MAP_DIR is None:
+        return predictions
+    ids = list(predictions)
+    maps = _spill_maps([predictions[sample_id][1] for sample_id in ids])
+    return {
+        sample_id: (predictions[sample_id][0], anomaly_map)
+        for sample_id, anomaly_map in zip(ids, maps)
+    }
+
 
 def _chunks(items: Sequence[Any], size: int) -> Iterable[Sequence[Any]]:
     for start in range(0, len(items), size):
@@ -71,7 +118,7 @@ def _predict_clean(adapter: Any, samples: list[Sample], config: EvaluationConfig
             if array.ndim != 2 or not np.isfinite(array).all() or not np.isfinite(score):
                 raise ValueError("Adapter predictions must be finite [B] and [B,H,W]")
             predictions[sample.protocol_id] = (float(score), array)
-    return predictions
+    return _spill_predictions(predictions)
 
 
 def _predict_attacked(
@@ -95,7 +142,7 @@ def _predict_attacked(
                 raise ValueError("Adapter predictions must be finite [B] and [B,H,W]")
             predictions[sample.protocol_id] = (float(score), array)
             distances[sample.protocol_id] = float(distance)
-    return predictions, distances
+    return _spill_predictions(predictions), distances
 
 
 class _CohortImages:
@@ -146,7 +193,7 @@ def _predict_set(
         if array.ndim != 2 or not np.isfinite(array).all() or not np.isfinite(score):
             raise ValueError("Adapter predictions must be finite [B] and [B,H,W]")
         predictions[sample.protocol_id] = (float(score), array)
-    return predictions, {sample.protocol_id: images.linf.get(sample.protocol_id, 0.0) for sample in samples}
+    return _spill_predictions(predictions), {sample.protocol_id: images.linf.get(sample.protocol_id, 0.0) for sample in samples}
 
 
 def _perturbations(attack: Attack, config: EvaluationConfig) -> dict[str, torch.Tensor]:
@@ -235,7 +282,7 @@ def _postprocess_predictions(
         raise ValueError("Adapter score postprocessing must return one finite score per sample")
     return {
         sample.protocol_id: (float(score), anomaly_map)
-        for sample, score, anomaly_map in zip(samples, processed, processed_maps)
+        for sample, score, anomaly_map in zip(samples, processed, _spill_maps(processed_maps))
     }
 
 
@@ -741,6 +788,10 @@ def _evaluate_condition(
         summary["location_free_topk_fraction"] = config.location_free_topk_fraction
         summary_rows.append(summary)
 
+    if config.maps_on_disk and not (config.save_predictions or config.save_qualitative_samples):
+        # Nothing is saved, so the whole cohort's maps are not stacked into
+        # memory just to be dropped.
+        return summary_rows, category_rows, per_image_rows, {}, delta, delta_index
     predictions = {
         "sample_ids": np.asarray([sample.protocol_id for sample in cohort]),
         "labels": np.asarray([sample.label for sample in cohort], dtype=np.uint8),
@@ -1208,6 +1259,7 @@ def _run_conditions(
     threshold_payload: dict[str, Any] = {"schema_version": 1, "model": config.model, "targets": {}}
     resolved_model_settings: dict[str, dict[str, object]] = {}
 
+    global _MAP_DIR
     sample_budget = _SampleBudget(config.max_sample_conditions)
     for target in config.targets:
         target_attacks = [attack for attack in attacks if attack.record["target_dataset"] == target]
@@ -1253,6 +1305,10 @@ def _run_conditions(
         kwargs.setdefault("device", config.device)
         kwargs.setdefault("image_size", config.image_size)
         adapter = create_adapter(config.model, **kwargs)
+        map_dir = (
+            Path(tempfile.mkdtemp(prefix="_maps_", dir=output)) if config.maps_on_disk else None
+        )
+        _MAP_DIR = map_dir
         try:
             model_settings = adapter.runtime_metadata()
             model_settings["shared_gaussian_sigma"] = config.gaussian_sigma
@@ -1401,12 +1457,15 @@ def _run_conditions(
             # referenced until the next target overwrites the names, i.e. after
             # that target's own clean pass has been held as well.
             adapter = raw_clean = clean = clean_metrics = clean_sets = None
-            cohort_clean = pending = raw_attacked = predictions = None
+            cohort_clean = pending = partner = raw_attacked = predictions = None
             attack_clean = delta = delta_index = None
             summary = categories = images = None
             gc.collect()
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
+            _MAP_DIR = None
+            if map_dir is not None:
+                shutil.rmtree(map_dir, ignore_errors=True)
 
     if not all_summary:
         raise ValueError("No selected conditions had a configured target")
